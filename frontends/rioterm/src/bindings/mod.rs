@@ -642,7 +642,27 @@ pub fn default_mouse_bindings() -> Vec<MouseBinding> {
     )
 }
 
+/// Parse a modifier combo description into a `ModifiersState` bitmask.
+/// Accepts `+` or `|` separated parts (e.g. "ctrl+shift", "super | alt")
+/// using the same vocabulary as `with` in key bindings: control/ctrl,
+/// shift, alt/option, super/cmd/command and none.
+pub fn parse_modifiers(mods: &str) -> ModifiersState {
+    let mut res = ModifiersState::empty();
+    for modifier in mods.split(['|', '+']) {
+        match modifier.trim().to_lowercase().as_str() {
+            "command" | "cmd" | "super" => res |= ModifiersState::SUPER,
+            "shift" => res |= ModifiersState::SHIFT,
+            "alt" | "option" => res |= ModifiersState::ALT,
+            "control" | "ctrl" => res |= ModifiersState::CONTROL,
+            "none" | "" => (),
+            unknown => tracing::warn!("unknown modifier '{unknown}', ignored"),
+        }
+    }
+    res
+}
+
 pub fn default_key_bindings(config: &rio_backend::config::Config) -> Vec<KeyBinding> {
+    let prefix = parse_modifiers(&config.bindings.prefix);
     let mut bindings = bindings!(
         KeyBinding;
         Key::Named(Copy);  Action::Copy;
@@ -767,12 +787,13 @@ pub fn default_key_bindings(config: &rio_backend::config::Config) -> Vec<KeyBind
         config.navigation.has_navigation_key_bindings(),
         config.navigation.use_split,
         config.keyboard.clone(),
+        prefix,
     ));
 
     // Add hint bindings
     bindings.extend(create_hint_bindings(&config.hints.rules));
 
-    config_key_bindings(config.bindings.keys.to_owned(), bindings)
+    config_key_bindings(config.bindings.keys.to_owned(), bindings, prefix)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -782,7 +803,10 @@ pub struct ModeWrapper {
 }
 
 #[inline]
-fn convert(config_key_binding: ConfigKeyBinding) -> Result<KeyBinding, String> {
+fn convert(
+    config_key_binding: ConfigKeyBinding,
+    prefix: ModifiersState,
+) -> Result<KeyBinding, String> {
     let (key, location) = if config_key_binding.key.chars().count() == 1 {
         (
             Key::Character(config_key_binding.key.to_lowercase().into()),
@@ -879,12 +903,15 @@ fn convert(config_key_binding: ConfigKeyBinding) -> Result<KeyBinding, String> {
     let trigger = BindingKey::Keycode { key, location };
 
     let mut res = ModifiersState::empty();
-    for modifier in config_key_binding.with.split('|') {
+    for modifier in config_key_binding.with.split(['|', '+']) {
         match modifier.trim().to_lowercase().as_str() {
             "command" | "super" => res.insert(ModifiersState::SUPER),
             "shift" => res.insert(ModifiersState::SHIFT),
             "alt" | "option" => res.insert(ModifiersState::ALT),
-            "control" => res.insert(ModifiersState::CONTROL),
+            "control" | "ctrl" => res.insert(ModifiersState::CONTROL),
+            // Resolve to the configured prefix modifiers, so custom
+            // bindings can follow `[bindings] prefix` as a whole.
+            "prefix" => res |= prefix,
             "none" => (),
             _ => (),
         }
@@ -1010,13 +1037,14 @@ pub fn ctrl_seq(key: &Key, text: &str, mods: ModifiersState) -> Option<u8> {
 pub fn config_key_bindings(
     config_key_bindings: Vec<ConfigKeyBinding>,
     mut bindings: Vec<KeyBinding>,
+    prefix: ModifiersState,
 ) -> Vec<KeyBinding> {
     if config_key_bindings.is_empty() {
         return bindings;
     }
 
     for ckb in config_key_bindings {
-        match convert(ckb) {
+        match convert(ckb, prefix) {
             Ok(key_binding) => {
                 // Remove any default binding that would conflict with this user binding
                 // This ensures user bindings always take precedence and prevents conflicts
@@ -1121,6 +1149,7 @@ pub fn platform_key_bindings(
     use_navigation_key_bindings: bool,
     use_splits: bool,
     config_keyboard: ConfigKeyboard,
+    prefix: ModifiersState,
 ) -> Vec<KeyBinding> {
     let mut key_bindings = bindings!(
         KeyBinding;
@@ -1163,7 +1192,7 @@ pub fn platform_key_bindings(
             KeyBinding;
             "t", ModifiersState::SUPER; Action::TabCreateNew;
             Key::Named(Tab), ModifiersState::CONTROL; Action::SelectNextTab;
-            Key::Named(Tab), ModifiersState::CONTROL | ModifiersState::SHIFT; Action::SelectPrevTab;
+            Key::Named(Tab), prefix; Action::SelectPrevTab;
             "w", ModifiersState::SUPER; Action::CloseCurrentSplitOrTab;
             "[", ModifiersState::SUPER | ModifiersState::SHIFT; Action::SelectPrevTab;
             "]", ModifiersState::SUPER | ModifiersState::SHIFT; Action::SelectNextTab;
@@ -1212,25 +1241,25 @@ pub fn platform_key_bindings(
     use_navigation_key_bindings: bool,
     use_splits: bool,
     _: ConfigKeyboard,
+    prefix: ModifiersState,
 ) -> Vec<KeyBinding> {
     let mut key_bindings = bindings!(
         KeyBinding;
-        "v", ModifiersState::CONTROL | ModifiersState::SHIFT, ~BindingMode::VI; Action::Paste;
-        "c", ModifiersState::CONTROL | ModifiersState::SHIFT; Action::Copy;
-        "c", ModifiersState::CONTROL | ModifiersState::SHIFT,
-            +BindingMode::VI; Action::ClearSelection;
+        "v", prefix, ~BindingMode::VI; Action::Paste;
+        "c", prefix; Action::Copy;
+        "c", prefix, +BindingMode::VI; Action::ClearSelection;
         Key::Named(Insert),   ModifiersState::SHIFT, ~BindingMode::VI; Action::PasteSelection;
         "0", ModifiersState::CONTROL;  Action::ResetFontSize;
         "=", ModifiersState::CONTROL;  Action::IncreaseFontSize;
         "+", ModifiersState::CONTROL;  Action::IncreaseFontSize;
         "-", ModifiersState::CONTROL;  Action::DecreaseFontSize;
-        "n", ModifiersState::CONTROL | ModifiersState::SHIFT; Action::WindowCreateNew;
-        ",", ModifiersState::CONTROL | ModifiersState::SHIFT; Action::ConfigEditor;
-        "p", ModifiersState::CONTROL | ModifiersState::SHIFT; Action::OpenCommandPalette;
+        "n", prefix; Action::WindowCreateNew;
+        ",", prefix; Action::ConfigEditor;
+        "p", prefix; Action::OpenCommandPalette;
 
         // Search
-        "f", ModifiersState::CONTROL | ModifiersState::SHIFT, ~BindingMode::SEARCH; Action::SearchForward;
-        "b", ModifiersState::CONTROL | ModifiersState::SHIFT, ~BindingMode::SEARCH; Action::SearchBackward;
+        "f", prefix, ~BindingMode::SEARCH; Action::SearchForward;
+        "b", prefix, ~BindingMode::SEARCH; Action::SearchBackward;
         "c", ModifiersState::CONTROL, +BindingMode::SEARCH; SearchAction::SearchCancel;
         "u", ModifiersState::CONTROL, +BindingMode::SEARCH; SearchAction::SearchClear;
         "w", ModifiersState::CONTROL,  +BindingMode::SEARCH; SearchAction::SearchDeleteWord;
@@ -1243,26 +1272,26 @@ pub fn platform_key_bindings(
     if use_navigation_key_bindings {
         key_bindings.extend(bindings!(
             KeyBinding;
-            "t", ModifiersState::CONTROL | ModifiersState::SHIFT; Action::TabCreateNew;
+            "t", prefix; Action::TabCreateNew;
             Key::Named(Tab), ModifiersState::CONTROL; Action::SelectNextTab;
-            Key::Named(Tab), ModifiersState::CONTROL | ModifiersState::SHIFT; Action::SelectPrevTab;
-            "[", ModifiersState::CONTROL | ModifiersState::SHIFT; Action::SelectPrevTab;
-            "]", ModifiersState::CONTROL | ModifiersState::SHIFT; Action::SelectNextTab;
-            "w", ModifiersState::CONTROL | ModifiersState::SHIFT; Action::CloseCurrentSplitOrTab;
+            Key::Named(Tab), prefix; Action::SelectPrevTab;
+            "[", prefix; Action::SelectPrevTab;
+            "]", prefix; Action::SelectNextTab;
+            "w", prefix; Action::CloseCurrentSplitOrTab;
         ));
     }
 
     if use_splits {
         key_bindings.extend(bindings!(
             KeyBinding;
-            "r", ModifiersState::CONTROL | ModifiersState::SHIFT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SplitRight;
-            "d", ModifiersState::CONTROL | ModifiersState::SHIFT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SplitDown;
-            "]", ModifiersState::CONTROL | ModifiersState::SHIFT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectNextSplit;
-            "[", ModifiersState::CONTROL | ModifiersState::SHIFT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectPrevSplit;
-            Key::Named(ArrowUp), ModifiersState::CONTROL | ModifiersState::SHIFT | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerUp;
-            Key::Named(ArrowDown), ModifiersState::CONTROL | ModifiersState::SHIFT | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerDown;
-            Key::Named(ArrowLeft), ModifiersState::CONTROL | ModifiersState::SHIFT | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerLeft;
-            Key::Named(ArrowRight), ModifiersState::CONTROL | ModifiersState::SHIFT | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerRight;
+            "r", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SplitRight;
+            "d", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SplitDown;
+            "]", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectNextSplit;
+            "[", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectPrevSplit;
+            Key::Named(ArrowUp), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerUp;
+            Key::Named(ArrowDown), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerDown;
+            Key::Named(ArrowLeft), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerLeft;
+            Key::Named(ArrowRight), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerRight;
         ));
     }
 
@@ -1275,30 +1304,31 @@ pub fn platform_key_bindings(
     use_navigation_key_bindings: bool,
     use_splits: bool,
     _: ConfigKeyboard,
+    prefix: ModifiersState,
 ) -> Vec<KeyBinding> {
     let mut key_bindings = bindings!(
         KeyBinding;
-        "v", ModifiersState::CONTROL | ModifiersState::SHIFT, ~BindingMode::VI; Action::Paste;
-        "c", ModifiersState::CONTROL | ModifiersState::SHIFT; Action::Copy;
-        "c", ModifiersState::CONTROL | ModifiersState::SHIFT, +BindingMode::VI; Action::ClearSelection;
+        "v", prefix, ~BindingMode::VI; Action::Paste;
+        "c", prefix; Action::Copy;
+        "c", prefix, +BindingMode::VI; Action::ClearSelection;
         Key::Named(Insert), ModifiersState::SHIFT, ~BindingMode::VI; Action::PasteSelection;
         "0", ModifiersState::CONTROL; Action::ResetFontSize;
         "=", ModifiersState::CONTROL; Action::IncreaseFontSize;
         "+", ModifiersState::CONTROL; Action::IncreaseFontSize;
         "-", ModifiersState::CONTROL; Action::DecreaseFontSize;
         Key::Named(Enter), ModifiersState::ALT; Action::ToggleFullscreen;
-        "n", ModifiersState::CONTROL | ModifiersState::SHIFT; Action::WindowCreateNew;
-        ",", ModifiersState::CONTROL | ModifiersState::SHIFT; Action::ConfigEditor;
+        "n", prefix; Action::WindowCreateNew;
+        ",", prefix; Action::ConfigEditor;
         // This is actually a Windows Powershell shortcut
         // https://github.com/alacritty/alacritty/issues/2930
         // https://github.com/raphamorim/rio/issues/220#issuecomment-1761651339
         Key::Named(Backspace), ModifiersState::CONTROL, ~BindingMode::VI; Action::Esc("\u{0017}".into());
-        Key::Named(Space), ModifiersState::CONTROL | ModifiersState::SHIFT; Action::ToggleViMode;
-        "p", ModifiersState::CONTROL | ModifiersState::SHIFT; Action::OpenCommandPalette;
+        Key::Named(Space), prefix; Action::ToggleViMode;
+        "p", prefix; Action::OpenCommandPalette;
 
         // Search
-        "f", ModifiersState::CONTROL | ModifiersState::SHIFT, ~BindingMode::SEARCH; Action::SearchForward;
-        "b", ModifiersState::CONTROL | ModifiersState::SHIFT, ~BindingMode::SEARCH; Action::SearchBackward;
+        "f", prefix, ~BindingMode::SEARCH; Action::SearchForward;
+        "b", prefix, ~BindingMode::SEARCH; Action::SearchBackward;
         "c", ModifiersState::CONTROL, +BindingMode::SEARCH; SearchAction::SearchCancel;
         "u", ModifiersState::CONTROL, +BindingMode::SEARCH; SearchAction::SearchClear;
         "w", ModifiersState::CONTROL,  +BindingMode::SEARCH; SearchAction::SearchDeleteWord;
@@ -1311,26 +1341,26 @@ pub fn platform_key_bindings(
     if use_navigation_key_bindings {
         key_bindings.extend(bindings!(
             KeyBinding;
-            "t", ModifiersState::CONTROL | ModifiersState::SHIFT; Action::TabCreateNew;
+            "t", prefix; Action::TabCreateNew;
             Key::Named(Tab), ModifiersState::CONTROL; Action::SelectNextTab;
-            Key::Named(Tab), ModifiersState::CONTROL | ModifiersState::SHIFT; Action::SelectPrevTab;
-            "w", ModifiersState::CONTROL | ModifiersState::SHIFT; Action::CloseCurrentSplitOrTab;
-            "[", ModifiersState::CONTROL | ModifiersState::SHIFT; Action::SelectPrevTab;
-            "]", ModifiersState::CONTROL | ModifiersState::SHIFT; Action::SelectNextTab;
+            Key::Named(Tab), prefix; Action::SelectPrevTab;
+            "w", prefix; Action::CloseCurrentSplitOrTab;
+            "[", prefix; Action::SelectPrevTab;
+            "]", prefix; Action::SelectNextTab;
         ));
     }
 
     if use_splits {
         key_bindings.extend(bindings!(
             KeyBinding;
-            "r", ModifiersState::CONTROL | ModifiersState::SHIFT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SplitRight;
-            "d", ModifiersState::CONTROL | ModifiersState::SHIFT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SplitDown;
-            "]", ModifiersState::CONTROL | ModifiersState::SHIFT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectNextSplit;
-            "[", ModifiersState::CONTROL | ModifiersState::SHIFT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectPrevSplit;
-            Key::Named(ArrowUp), ModifiersState::CONTROL | ModifiersState::SHIFT | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerUp;
-            Key::Named(ArrowDown), ModifiersState::CONTROL | ModifiersState::SHIFT | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerDown;
-            Key::Named(ArrowLeft), ModifiersState::CONTROL | ModifiersState::SHIFT | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerLeft;
-            Key::Named(ArrowRight), ModifiersState::CONTROL | ModifiersState::SHIFT | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerRight;
+            "r", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SplitRight;
+            "d", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SplitDown;
+            "]", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectNextSplit;
+            "[", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectPrevSplit;
+            Key::Named(ArrowUp), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerUp;
+            Key::Named(ArrowDown), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerDown;
+            Key::Named(ArrowLeft), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerLeft;
+            Key::Named(ArrowRight), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerRight;
         ));
     }
 
@@ -1340,7 +1370,12 @@ pub fn platform_key_bindings(
 }
 
 #[cfg(test)]
-pub fn platform_key_bindings(_: bool, _: bool, _: ConfigKeyboard) -> Vec<KeyBinding> {
+pub fn platform_key_bindings(
+    _: bool,
+    _: bool,
+    _: ConfigKeyboard,
+    _: ModifiersState,
+) -> Vec<KeyBinding> {
     vec![]
 }
 
@@ -1614,7 +1649,11 @@ mod tests {
             mode: String::from(""),
         }];
 
-        let new_bindings = config_key_bindings(config_bindings, bindings);
+        let new_bindings = config_key_bindings(
+            config_bindings,
+            bindings,
+            ModifiersState::CONTROL | ModifiersState::SHIFT,
+        );
 
         assert_eq!(new_bindings.len(), 2);
         assert_eq!(new_bindings[1].action, Action::ReceiveChar);
@@ -1647,7 +1686,11 @@ mod tests {
             },
         ];
 
-        let new_bindings = config_key_bindings(config_bindings, bindings);
+        let new_bindings = config_key_bindings(
+            config_bindings,
+            bindings,
+            ModifiersState::CONTROL | ModifiersState::SHIFT,
+        );
 
         // Should have 2 bindings (the original defaults should be replaced)
         assert_eq!(new_bindings.len(), 2);
@@ -1702,7 +1745,11 @@ mod tests {
             esc: String::from(""),
             mode: String::from(""),
         }];
-        let new_bindings = config_key_bindings(config_bindings, bindings);
+        let new_bindings = config_key_bindings(
+            config_bindings,
+            bindings,
+            ModifiersState::CONTROL | ModifiersState::SHIFT,
+        );
         assert_eq!(new_bindings.len(), 1);
         assert_eq!(new_bindings[0].action, Action::Quit);
     }
@@ -1717,7 +1764,11 @@ mod tests {
                 esc: String::from(""),
                 mode: String::from(""),
             }];
-            let new_bindings = config_key_bindings(config_bindings, Vec::new());
+            let new_bindings = config_key_bindings(
+                config_bindings,
+                Vec::new(),
+                ModifiersState::CONTROL | ModifiersState::SHIFT,
+            );
             assert_eq!(new_bindings.len(), 1, "{name} must parse");
             assert_eq!(
                 new_bindings[0].trigger,
@@ -1814,11 +1865,79 @@ mod tests {
             mode: String::from(""),
         }];
 
-        let new_bindings = config_key_bindings(config_bindings, bindings);
+        let new_bindings = config_key_bindings(
+            config_bindings,
+            bindings,
+            ModifiersState::CONTROL | ModifiersState::SHIFT,
+        );
 
         // Should have 1 binding (the original Alt+Enter should be replaced)
         assert_eq!(new_bindings.len(), 1);
 
         assert_eq!(&new_bindings[0].action, &Action::Scroll(1));
+    }
+
+    #[test]
+    fn parse_modifiers_accepts_plus_and_pipe() {
+        assert_eq!(
+            parse_modifiers("ctrl+shift"),
+            ModifiersState::CONTROL | ModifiersState::SHIFT
+        );
+        assert_eq!(
+            parse_modifiers("control | shift"),
+            ModifiersState::CONTROL | ModifiersState::SHIFT
+        );
+        assert_eq!(parse_modifiers("alt"), ModifiersState::ALT);
+        assert_eq!(parse_modifiers("cmd"), ModifiersState::SUPER);
+        assert_eq!(parse_modifiers("none"), ModifiersState::empty());
+        assert_eq!(parse_modifiers(""), ModifiersState::empty());
+    }
+
+    #[test]
+    fn custom_binding_with_prefix_modifier() {
+        // `with = 'prefix'` resolves to the configured prefix modifiers
+        let config_bindings = vec![ConfigKeyBinding {
+            key: String::from("k"),
+            action: String::from("quit"),
+            with: String::from("prefix"),
+            esc: String::from(""),
+            mode: String::from(""),
+        }];
+        let new_bindings = config_key_bindings(
+            config_bindings,
+            Vec::new(),
+            ModifiersState::CONTROL | ModifiersState::SHIFT,
+        );
+        assert_eq!(new_bindings.len(), 1);
+        assert_eq!(
+            new_bindings[0].mods,
+            ModifiersState::CONTROL | ModifiersState::SHIFT
+        );
+
+        // Extra modifiers compose on top of the prefix
+        let config_bindings = vec![ConfigKeyBinding {
+            key: String::from("k"),
+            action: String::from("quit"),
+            with: String::from("prefix | alt"),
+            esc: String::from(""),
+            mode: String::from(""),
+        }];
+        let new_bindings = config_key_bindings(
+            config_bindings,
+            Vec::new(),
+            ModifiersState::CONTROL | ModifiersState::SHIFT,
+        );
+        assert_eq!(
+            new_bindings[0].mods,
+            ModifiersState::CONTROL | ModifiersState::SHIFT | ModifiersState::ALT
+        );
+    }
+
+    #[test]
+    fn default_prefix_is_ctrl_shift() {
+        assert_eq!(
+            parse_modifiers(&rio_backend::config::Config::default().bindings.prefix),
+            ModifiersState::CONTROL | ModifiersState::SHIFT
+        );
     }
 }

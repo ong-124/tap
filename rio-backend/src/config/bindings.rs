@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::defaults::default_binding_prefix;
+
 // Examples:
 // { key = "w", mods: "super", action = "quit" }
 // { key = "Home", mods: "super | shift", esc = "\x1b[5~" }
@@ -19,9 +21,25 @@ pub struct KeyBinding {
 
 pub type KeyBindings = Vec<KeyBinding>;
 
-#[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Bindings {
     pub keys: KeyBindings,
+    /// Modifier prefix shared by all prefixed built-in key bindings
+    /// (copy, paste, tabs, splits, ...). Accepts a single modifier
+    /// combo described with `+` or `|`, e.g. "ctrl+shift", "alt",
+    /// "super | ctrl". Custom key bindings may reference it as the
+    /// `prefix` modifier (`with = 'prefix'` or `'prefix | alt'`).
+    #[serde(default = "default_binding_prefix")]
+    pub prefix: String,
+}
+
+impl Default for Bindings {
+    fn default() -> Bindings {
+        Bindings {
+            keys: KeyBindings::default(),
+            prefix: default_binding_prefix(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -151,6 +169,29 @@ mod tests {
         assert_eq!(decoded.bindings.keys[5].with, "super | shift");
         assert_eq!(decoded.bindings.keys[5].action.to_owned(), "selectprevtab");
         assert!(decoded.bindings.keys[5].esc.to_owned().is_empty());
+    }
+
+    #[test]
+    fn test_binding_prefix_default() {
+        let content = r#"
+            [bindings]
+            keys = []
+        "#;
+
+        let decoded = toml::from_str::<Root>(content).unwrap();
+        assert_eq!(decoded.bindings.prefix, "ctrl+shift");
+    }
+
+    #[test]
+    fn test_binding_prefix_custom() {
+        let content = r#"
+            [bindings]
+            prefix = 'alt'
+            keys = []
+        "#;
+
+        let decoded = toml::from_str::<Root>(content).unwrap();
+        assert_eq!(decoded.bindings.prefix, "alt");
     }
 
     #[test]

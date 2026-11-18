@@ -12,10 +12,10 @@
   - 背景图独立暗化/透明度处理，不影响字符渲染：背景图绘制前移至 grid 之前（与 Metal 一致），基色改为主题背景色
   - 字符对比度验证：待用户实测（opacity 仅影响图像层混合比例，字符全对比度）
   - 默认背景图：默认启用 background/t013c2f41e0a5020acc.jpg，空 path 可退出
-- [ ] 【待开始】前缀键（老板键）可配置化（[详情](task/20261118-1941_前缀键可配置化.md)）
-  - 设计统一 prefix 配置项（一处配置，全部绑定生效）
-  - 配置加载与默认值（现默认 ctrl+shift）
-  - 绑定生成改造，去除散落的硬编码前缀
+- [x] 【已完成】前缀键（老板键）可配置化（[详情](task/20261118-1941_前缀键可配置化.md)）
+  - 设计统一 prefix 配置项（一处配置，全部绑定生效）：`[bindings] prefix = "ctrl+shift"`（+ 或 | 分隔，支持 control/shift/alt/super 等词）
+  - 配置加载与默认值（现默认 ctrl+shift）：`Bindings.prefix` 字段 + `default_binding_prefix()`，不配置即保持现状
+  - 绑定生成改造，去除散落的硬编码前缀：三平台 `platform_key_bindings` 统一由 prefix 位掩码生成（含 divider 的 prefix+ALT）；自定义绑定 `with = 'prefix'` 同样跟随；测试 221+296 通过，待用户实测
 - [x] 【已完成】纯键盘选择与复制（终端面板 vim 可视模式）（[详情](task/20261118-1941_纯键盘选择与复制.md)）
   - 调研现有 vi_mode 与需求差距：能力已基本齐备，差距为 y 不写 PRIMARY、Esc 不退 vi、滚动移动不扩展选区、{ } 未绑键
   - 直接在终端面板进入选择模式（不依赖鼠标）：沿用 Alt+Shift+Space → v 两步（用户确认不加新键）

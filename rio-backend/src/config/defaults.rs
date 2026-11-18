@@ -158,6 +158,11 @@ pub fn default_forward_to_ime_modifier_mask() -> Vec<String> {
     ]
 }
 
+#[inline]
+pub fn default_binding_prefix() -> String {
+    String::from("ctrl+shift")
+}
+
 pub fn default_config_file_content() -> String {
     String::from(
         "# See the full configuration reference: https://rioterm.com/docs/config\n",
