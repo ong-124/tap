@@ -202,7 +202,11 @@ pub struct Window {
     #[serde(default)]
     pub blur: WindowBlur,
     #[cfg(feature = "renderer")]
-    #[serde(rename = "background-image", skip_serializing)]
+    #[serde(
+        rename = "background-image",
+        skip_serializing,
+        default = "default_background_image"
+    )]
     pub background_image: Option<ImageProperties>,
     #[serde(default = "Decorations::default")]
     pub decorations: Decorations,
@@ -254,7 +258,7 @@ impl Default for Window {
             opacity: default_opacity(),
             opacity_cells: false,
             #[cfg(feature = "renderer")]
-            background_image: None,
+            background_image: default_background_image(),
             decorations: Decorations::default(),
             blur: WindowBlur::default(),
             macos_use_unified_titlebar: false,
@@ -280,6 +284,23 @@ fn default_quake_width_percentage() -> f32 {
 
 fn default_quake_height_percentage() -> f32 {
     0.4
+}
+
+/// Default window background image for this fork. A config file that
+/// sets `[window.background-image]` overrides it; one that wants no
+/// image can point `path` at a missing file or override with an empty
+/// config table (the load failure surfaces as a dismissible warning,
+/// not a hard error). `opacity` starts fully opaque — the image
+/// opacity only blends the image toward the terminal bg color and
+/// never touches the characters (drawn on a layer above the image).
+#[cfg(feature = "renderer")]
+fn default_background_image() -> Option<ImageProperties> {
+    Some(ImageProperties {
+        path: String::from(
+            "/home/ong/Documents/Item/tap/background/t013c2f41e0a5020acc.jpg",
+        ),
+        opacity: 1.0,
+    })
 }
 
 impl Colorspace {

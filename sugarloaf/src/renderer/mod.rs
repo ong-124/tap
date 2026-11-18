@@ -1859,6 +1859,61 @@ impl Renderer {
         );
     }
 
+    /// Draw the background image (if any) as the bottom layer of the
+    /// frame, so every subsequent pass — grid bg, grid text, kitty
+    /// layers, rich-text overlays, UI text — composites on top of it.
+    /// Single fullscreen instance, dedicated vertex buffer, reuses the
+    /// kitty image pipeline + sampler.
+    ///
+    /// Split out of `render` because the grid passes are recorded by
+    /// the caller (`Sugarloaf::render_wgpu`) *before* it calls
+    /// `render` — drawing the image first *inside* `render` still put
+    /// it after the grid text pass, i.e. a translucent "background"
+    /// image blended over the characters and faded them.
+    #[inline]
+    #[cfg(feature = "wgpu")]
+    pub fn render_background_image_wgpu(
+        &self,
+        ctx: &WgpuContext,
+        rpass: &mut wgpu::RenderPass<'_>,
+    ) {
+        let Some(bg_tex) = self.background_image_texture.as_ref() else {
+            return;
+        };
+        let RendererType::Wgpu(brush) = &self.brush_type else {
+            return;
+        };
+        let ImageTexture::Wgpu { view, .. } = &bg_tex.gpu else {
+            return;
+        };
+        let instance = ImageInstance {
+            dest_pos: [0.0, 0.0],
+            dest_size: [ctx.size.width, ctx.size.height],
+            source_rect: [0.0, 0.0, 1.0, 1.0],
+        };
+        ctx.queue.write_buffer(
+            &brush.background_image_vertex_buffer,
+            0,
+            bytemuck::bytes_of(&instance),
+        );
+        let bg_bind = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("background image bind group"),
+            layout: &brush.image_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(view),
+            }],
+        });
+        rpass.set_pipeline(&brush.image_pipeline);
+        rpass.set_bind_group(0, &brush.constant_bind_group, &[]);
+        rpass.set_bind_group(1, &bg_bind, &[]);
+        rpass.set_vertex_buffer(0, brush.background_image_vertex_buffer.slice(..));
+        rpass.draw(0..4, 0..1);
+        // Restore text pipeline state for downstream batches.
+        rpass.set_pipeline(&brush.pipeline);
+        rpass.set_bind_group(0, &brush.constant_bind_group, &[]);
+    }
+
     #[inline]
     #[cfg(feature = "wgpu")]
     pub fn render<'pass>(
@@ -1875,7 +1930,6 @@ impl Renderer {
             draw_cmds,
             image_draws,
             image_textures,
-            background_image_texture,
             ..
         } = self;
 
@@ -1884,50 +1938,10 @@ impl Renderer {
             let mask_texture_view = images.get_mask_texture_view();
 
             let has_images = !image_draws.is_empty();
-            let has_background = background_image_texture.is_some();
             if (color_views.is_empty() || (instances.is_empty() && vertices.is_empty()))
                 && !has_images
-                && !has_background
             {
                 return;
-            }
-
-            // Background image: drawn first so all subsequent text/rects
-            // composite on top. Single fullscreen instance, dedicated
-            // vertex buffer, reuses the kitty image pipeline + sampler.
-            if let Some(bg_tex) = background_image_texture.as_ref() {
-                if let ImageTexture::Wgpu { view, .. } = &bg_tex.gpu {
-                    let instance = ImageInstance {
-                        dest_pos: [0.0, 0.0],
-                        dest_size: [ctx.size.width, ctx.size.height],
-                        source_rect: [0.0, 0.0, 1.0, 1.0],
-                    };
-                    ctx.queue.write_buffer(
-                        &brush.background_image_vertex_buffer,
-                        0,
-                        bytemuck::bytes_of(&instance),
-                    );
-                    let bg_bind =
-                        ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("background image bind group"),
-                            layout: &brush.image_bind_group_layout,
-                            entries: &[wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(view),
-                            }],
-                        });
-                    rpass.set_pipeline(&brush.image_pipeline);
-                    rpass.set_bind_group(0, &brush.constant_bind_group, &[]);
-                    rpass.set_bind_group(1, &bg_bind, &[]);
-                    rpass.set_vertex_buffer(
-                        0,
-                        brush.background_image_vertex_buffer.slice(..),
-                    );
-                    rpass.draw(0..4, 0..1);
-                    // Restore text pipeline state for downstream batches.
-                    rpass.set_pipeline(&brush.pipeline);
-                    rpass.set_bind_group(0, &brush.constant_bind_group, &[]);
-                }
             }
 
             if has_images && image_draws.iter().any(|d| d.layer == ImageLayer::BelowText)
@@ -2462,18 +2476,51 @@ impl Renderer {
         });
     }
 
+    /// Vulkan counterpart of `render_background_image_wgpu`: record
+    /// the fullscreen background-image quad as the bottom layer of the
+    /// frame. Called by `Sugarloaf::render_vulkan` BEFORE the grid
+    /// bg/text passes — `render_vulkan` used to draw it after them,
+    /// putting the translucent image on top of the characters.
+    // `if let ImageTexture::Vulkan(...)` is irrefutable on Linux+no-wgpu
+    // because that's the only variant compiled in (Wgpu / Metal arms
+    // are cfg'd out). Keeping the `let ... else` form so the same code
+    // stays valid when wgpu support is enabled.
+    #[allow(irrefutable_let_patterns)]
+    #[cfg(target_os = "linux")]
+    pub fn render_background_image_vulkan(
+        &mut self,
+        cmd: ash::vk::CommandBuffer,
+        frame: &crate::context::vulkan::VulkanFrame,
+    ) {
+        let Some(bg) = &self.background_image_texture else {
+            return;
+        };
+        let ImageTexture::Vulkan(tex) = &bg.gpu else {
+            return;
+        };
+        let RendererType::Vulkan(brush) = &mut self.brush_type else {
+            return;
+        };
+        let viewport = [frame.extent.width as f32, frame.extent.height as f32];
+        brush.render_background_image(cmd, frame.slot, viewport, tex.descriptor_set);
+    }
+
     /// Record sugarloaf's own draws inside the active dynamic-rendering
     /// pass that `Sugarloaf::render_vulkan` opens. Order:
-    /// 1. Background image (full-screen quad).
-    /// 2. BelowText image overlays (kitty / sixel placements with
+    /// 1. BelowText image overlays (kitty / sixel placements with
     ///    `dest_pos.z < 0`).
-    /// 3. Rich-text quad pass — `quad()` / `rect()` calls + cell
+    /// 2. Rich-text quad pass — `quad()` / `rect()` calls + cell
     ///    underline decorations (dashed/dotted/curly handled in
     ///    `quad.frag.glsl`).
-    /// 4. Non-quad geometry — `polygon()` / `line()` / `triangle()`
+    /// 3. Non-quad geometry — `polygon()` / `line()` / `triangle()`
     ///    / `arc()` calls (cursor underline shape, hint highlights).
-    /// 5. AboveText image overlays.
-    /// 6. Optional bootstrap rect (`RIO_VULKAN_BOOTSTRAP=1`).
+    /// 4. AboveText image overlays.
+    /// 5. Optional bootstrap rect (`RIO_VULKAN_BOOTSTRAP=1`).
+    ///
+    /// The background image is NOT drawn here — it is the bottom
+    /// layer and must land before the grid text pass, so
+    /// `Sugarloaf::render_vulkan` records it first via
+    /// `render_background_image_vulkan`.
     ///
     /// Glyph atlas sampling through this pipeline isn't ported —
     /// grid text + UI text overlay each own dedicated atlas
@@ -2525,17 +2572,6 @@ impl Renderer {
             .collect();
 
         if let RendererType::Vulkan(brush) = &mut self.brush_type {
-            if let Some(bg) = &self.background_image_texture {
-                if let ImageTexture::Vulkan(tex) = &bg.gpu {
-                    brush.render_background_image(
-                        cmd,
-                        slot,
-                        viewport,
-                        tex.descriptor_set,
-                    );
-                }
-            }
-
             brush.render_image_overlays(cmd, slot, viewport, &below);
             brush.render_quads(cmd, slot, viewport, &self.instances);
             brush.render_geometry(cmd, slot, viewport, &self.vertices);

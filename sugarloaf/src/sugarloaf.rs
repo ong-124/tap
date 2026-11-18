@@ -1093,6 +1093,13 @@ impl Sugarloaf<'_> {
             device.cmd_set_scissor(cmd, 0, &[scissor]);
         }
 
+        // Background image: bottom layer of the frame, recorded BEFORE
+        // the grid passes so cell backgrounds and the grid TEXT pass
+        // composite on top of it (`render_vulkan` below used to draw
+        // it first inside itself — still after the grid text pass,
+        // which made a translucent image fade the characters).
+        self.renderer.render_background_image_vulkan(cmd, &frame);
+
         // Per-panel grid passes — draw cell backgrounds + grid text
         // underneath everything else. Vulkan doesn't yet interleave
         // kitty image layers around the bg/text split — same as the
@@ -1203,7 +1210,16 @@ impl Sugarloaf<'_> {
                 multiview_mask: None,
             });
 
-            // Grid passes first — cell bg/text composite under
+            // Background image: bottom layer of the frame. Drawn here,
+            // before the grid passes, so cell backgrounds and —
+            // critically — the grid TEXT pass composite on top of it.
+            // (It used to be drawn first inside `Renderer::render`
+            // below, which still placed it after the grid text pass:
+            // a translucent background image blended over the
+            // characters and "faded" them.)
+            self.renderer.render_background_image_wgpu(ctx, &mut rpass);
+
+            // Grid passes next — cell bg/text composite under
             // the rich-text UI overlays drawn below. Wgpu
             // doesn't yet interleave kitty image layers with
             // the grid bg/text split (BrushRenderer::render

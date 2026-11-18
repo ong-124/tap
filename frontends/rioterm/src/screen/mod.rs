@@ -313,8 +313,13 @@ impl Screen<'_> {
         sugarloaf.set_window_opaque(window_should_be_opaque(config));
         sugarloaf.set_background_color(Some(renderer.dynamic_background.1));
 
+        // `background-image = { path = "" }` opts out of the fork's
+        // default background image; an empty path is treated as "no
+        // image" instead of surfacing a load-failure warning.
         if let Some(image) = &config.window.background_image {
-            if let Err(message) = sugarloaf.set_background_image(image) {
+            if image.path.is_empty() {
+                sugarloaf.clear_background_image();
+            } else if let Err(message) = sugarloaf.set_background_image(image) {
                 renderer.assistant.set_error(RioError {
                     level: RioErrorLevel::Warning,
                     report: RioErrorType::BackgroundImageLoadFailure(message),
@@ -627,8 +632,11 @@ impl Screen<'_> {
         self.sugarloaf
             .set_background_color(Some(self.renderer.dynamic_background.1));
 
+        // Same empty-path opt-out as `Screen::new`.
         if let Some(image) = &config.window.background_image {
-            if let Err(message) = self.sugarloaf.set_background_image(image) {
+            if image.path.is_empty() {
+                self.sugarloaf.clear_background_image();
+            } else if let Err(message) = self.sugarloaf.set_background_image(image) {
                 self.renderer.assistant.set_error(RioError {
                     level: RioErrorLevel::Warning,
                     report: RioErrorType::BackgroundImageLoadFailure(message),

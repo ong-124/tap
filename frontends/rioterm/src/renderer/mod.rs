@@ -217,12 +217,19 @@ impl Renderer {
         // the actual translucent bg — `window_bg_alpha` returns 0 in
         // that case, so the glass and `opacity < 1` paths share one
         // assignment.
+        //
+        // With a background image the window bg keeps the theme
+        // background color (opaque when `window.opacity = 1`): the
+        // image is drawn on top of this fill, so `background-image
+        // .opacity` blends the image toward the terminal bg color
+        // and only the image — the characters are drawn after the
+        // image and stay at full contrast. (An earlier version
+        // forced `Color::TRANSPARENT` here, which on an opaque
+        // window degenerated to black and darkened the image toward
+        // black instead.)
         let target_bg_alpha = window_bg_alpha(config);
         if config.window.blur.is_glass() || config.window.opacity < 1. {
             dynamic_background.1.a = target_bg_alpha as f64;
-            dynamic_background.2 = true;
-        } else if config.window.background_image.is_some() {
-            dynamic_background.1 = rio_backend::sugarloaf::Color::TRANSPARENT;
             dynamic_background.2 = true;
         }
 
