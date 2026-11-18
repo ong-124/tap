@@ -31,8 +31,8 @@
   - 迁移：旧 `~/.config/rio/config.toml` 需手动移动/复制到新位置
 - [x] 【已完成】默认配置固化（字体/字号/窗口/透明度）（[详情](task/20261118-2059_默认配置固化字体字号窗口.md)）
   - 字号默认 18，字体默认 Fira Code SemiBold（family 覆盖全部 slot，缺失时 warning + 内置兜底）
-  - 窗口默认 Maximized，窗口透明度默认 0.8；配合默认背景图实现无配置文件开箱即用
-  - 验证：config 88 测试 + sugarloaf 138 测试通过，待用户冷启动实测
+  - 窗口默认 Maximized；默认 opacity 经用户复核定为 1.0（曾设 0.8 后改回，透明度留给用户按需配置）
+  - 配合默认背景图实现无配置文件开箱即用；验证：config 88 测试 + sugarloaf 138 测试通过，待用户冷启动实测
 - [x] 【已完成】构建产物改名为 tap（[详情](task/20261118-2110_构建产物改名为tap.md)）
   - `[[bin]] name` rio → tap（target/{debug,release}/tap），deb 资源路径同步
   - APPLICATION_ID "Rio" → "Tap"（WM_CLASS / Wayland app_id），desktop 文件改名 tap.desktop 并同步 Exec/Icon/StartupWMClass
