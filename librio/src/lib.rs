@@ -615,25 +615,14 @@ impl Surface {
             let shell = desc.shell.as_deref();
 
             // The child inherits the host process's environment, which for GUI
-            // hosts has no TERM at all (or a stale one). Resolve it the way rio
-            // does: prefer rio's terminfo when it's installed, else fall back to
-            // the universally known xterm-256color so local prompts and remote
-            // ssh sessions both keep working.
+            // hosts has no TERM at all (or a stale one). Pin the universally
+            // known `xterm-256color` so local prompts and remote ssh sessions
+            // (ssh forwards TERM to hosts without rio's terminfo) keep working.
             #[cfg(not(target_os = "windows"))]
-            let env = {
-                let terminfo = match (
-                    teletypewriter::terminfo_exists("xterm-rio"),
-                    teletypewriter::terminfo_exists("rio"),
-                ) {
-                    (true, _) => "xterm-rio",
-                    (false, true) => "rio",
-                    (false, false) => "xterm-256color",
-                };
-                Some(vec![
-                    ("TERM".to_string(), terminfo.to_string()),
-                    ("COLORTERM".to_string(), "truecolor".to_string()),
-                ])
-            };
+            let env = Some(vec![
+                ("TERM".to_string(), "xterm-256color".to_string()),
+                ("COLORTERM".to_string(), "truecolor".to_string()),
+            ]);
 
             #[cfg(not(target_os = "windows"))]
             let pty = create_pty_with_spawn(

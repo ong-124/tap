@@ -46,17 +46,13 @@ const LOG_LEVEL_ENV: &str = "RIO_LOG_LEVEL";
 pub fn setup_environment_variables(config: &rio_backend::config::Config) {
     #[cfg(unix)]
     {
-        let terminfo = match (
-            teletypewriter::terminfo_exists("xterm-rio"),
-            teletypewriter::terminfo_exists("rio"),
-        ) {
-            // In case `xterm-rio` exists we prioritize it
-            (true, _) => "xterm-rio",
-            // If is only `rio` installed (which was the default for versions under 0.2.27)
-            (false, true) => "rio",
-            // If none, then fallback to `xterm-256color`
-            (false, false) => "xterm-256color",
-        };
+        // Pin TERM to `xterm-256color` instead of rio's own terminfo names:
+        // ssh forwards TERM to remote hosts, which don't ship rio's terminfo
+        // and would fail with "unknown terminal type". `xterm-256color` is
+        // bundled with ncurses-base everywhere, and rio emits xterm-compatible
+        // sequences, so behavior is unchanged. Truecolor stays available
+        // through COLORTERM below.
+        let terminfo = "xterm-256color";
 
         let span = tracing::span!(tracing::Level::INFO, "setup_environment_variables");
         let _guard = span.enter();
