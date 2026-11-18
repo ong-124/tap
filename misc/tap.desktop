@@ -1,15 +1,15 @@
 [Desktop Entry]
 Type=Application
-TryExec=rio
-Exec=rio
-Icon=rio
+TryExec=tap
+Exec=tap
+Icon=tap
 Terminal=false
 Categories=System;TerminalEmulator;
 
-Name=Rio
+Name=Tap
 GenericName=Terminal
 Comment=A hardware-accelerated GPU terminal emulator powered by WebGPU
-StartupWMClass=Rio
+StartupWMClass=Tap
 Actions=New;
 X-TerminalArgExec=-e
 X-TerminalArgAppId=--app-id=
@@ -19,4 +19,4 @@ X-TerminalArgHold=--hold
 
 [Desktop Action New]
 Name=New Terminal
-Exec=rio
+Exec=tap

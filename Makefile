@@ -137,10 +137,10 @@ bump-brew:
 # TODO: Move to bin path
 release-x11:
 	RUSTFLAGS='-C link-arg=-s' cargo build --release --no-default-features --features=x11
-	target/release/rio
+	target/release/tap
 release-wayland:
 	RUSTFLAGS='-C link-arg=-s' cargo build --release --no-default-features --features=wayland
-	target/release/rio
+	target/release/tap
 
 # Debian
 # cargo install cargo-deb
