@@ -16,11 +16,12 @@
   - 设计统一 prefix 配置项（一处配置，全部绑定生效）
   - 配置加载与默认值（现默认 ctrl+shift）
   - 绑定生成改造，去除散落的硬编码前缀
-- [ ] 【待开始】纯键盘选择与复制（终端面板 vim 可视模式）（[详情](task/20261118-1941_纯键盘选择与复制.md)）
-  - 调研现有 vi_mode 与需求差距
-  - 直接在终端面板进入选择模式（不依赖鼠标）
-  - vim 风格移动/选择/复制（y 复制、v 可视选择）
-  - 选中内容进剪贴/缓冲区，配合中键输出
+- [x] 【已完成】纯键盘选择与复制（终端面板 vim 可视模式）（[详情](task/20261118-1941_纯键盘选择与复制.md)）
+  - 调研现有 vi_mode 与需求差距：能力已基本齐备，差距为 y 不写 PRIMARY、Esc 不退 vi、滚动移动不扩展选区、{ } 未绑键
+  - 直接在终端面板进入选择模式（不依赖鼠标）：沿用 Alt+Shift+Space → v 两步（用户确认不加新键）
+  - vim 风格移动/选择/复制（y 复制、v 可视选择）：Esc 改两段式（ClearSelectionOrExit）；Ctrl+d/u 等滚动移动补选区扩展与高亮同步；Shift+[ / ] 段落移动
+  - 选中内容进剪贴/缓冲区，配合中键输出：新增 sync_vi_selection_clipboard，选区变化实时写 PRIMARY，y 双写 CLIPBOARD+PRIMARY
+  - 验证：cargo build / test（rio-vt 708、rio-backend 219、rioterm 293）/ clippy / fmt 通过，待用户手测（含 xclip 验证 PRIMARY、中键粘贴）
 - [x] 【已完成】TERM 固定为 xterm-256color 兼容 SSH 远程（[详情](task/20261118-2000_TERM固定为xterm-256color兼容SSH远程.md)）
   - 统一三处 TERM 设置点（rioterm main / librio pty / flatpak spawn），固定为 xterm-256color
   - 保留 COLORTERM=truecolor，本地会话回归验证（颜色、按键、vim/less/tmux）

@@ -267,6 +267,7 @@ impl From<String> for Action {
             "movedividerleft" => Some(Action::MoveDividerLeft),
             "movedividerright" => Some(Action::MoveDividerRight),
             "togglevimode" => Some(Action::ToggleViMode),
+            "clearselectionorexitvi" => Some(Action::Vi(ViAction::ClearSelectionOrExit)),
             "toggleappearancetheme" => Some(Action::ToggleAppearanceTheme),
             "togglefullscreen" => Some(Action::ToggleFullscreen),
             "opencommandpalette" => Some(Action::OpenCommandPalette),
@@ -561,6 +562,9 @@ pub enum ViAction {
     ToggleSemanticSelection,
     /// Centers the screen around the vi mode cursor.
     CenterAroundViCursor,
+    /// Clear the active selection, or leave vi mode when no selection is
+    /// present.
+    ClearSelectionOrExit,
 }
 
 macro_rules! bindings {
@@ -677,7 +681,7 @@ pub fn default_key_bindings(config: &rio_backend::config::Config) -> Vec<KeyBind
         Key::Named(Enter) => KeyLocation::Numpad, ModifiersState::SHIFT, +BindingMode::SEARCH, ~BindingMode::VI; SearchAction::SearchFocusPrevious;
         "i", +BindingMode::VI, ~BindingMode::SEARCH; Action::ToggleViMode;
         "c", ModifiersState::CONTROL, +BindingMode::VI; Action::ToggleViMode;
-        Key::Named(Escape), +BindingMode::VI; Action::ClearSelection;
+        Key::Named(Escape), +BindingMode::VI, ~BindingMode::SEARCH; ViAction::ClearSelectionOrExit;
         "i", +BindingMode::VI, ~BindingMode::SEARCH; Action::ScrollToBottom;
         "g", +BindingMode::VI, ~BindingMode::SEARCH; Action::ScrollToTop;
         "g", ModifiersState::SHIFT, +BindingMode::VI, ~BindingMode::SEARCH; Action::ScrollToBottom;
@@ -732,6 +736,10 @@ pub fn default_key_bindings(config: &rio_backend::config::Config) -> Vec<KeyBind
             ViMotion::WordRightEnd;
         "5",   ModifiersState::SHIFT, +BindingMode::VI, ~BindingMode::SEARCH;
             ViMotion::Bracket;
+        "[",      ModifiersState::SHIFT, +BindingMode::VI, ~BindingMode::SEARCH;
+            ViMotion::ParagraphUp;
+        "]",      ModifiersState::SHIFT, +BindingMode::VI, ~BindingMode::SEARCH;
+            ViMotion::ParagraphDown;
     );
 
     bindings.extend(bindings!(

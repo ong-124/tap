@@ -127,6 +127,12 @@ Multiple modifiers can be combined with "|", for example: "ctrl|shift".
 *G*
 	Move to bottom of buffer.
 
+*Shift+[*
+	Move to previous paragraph.
+
+*Shift+]*
+	Move to next paragraph.
+
 */*
 	Start forward search.
 
@@ -152,7 +158,7 @@ Multiple modifiers can be combined with "|", for example: "ctrl|shift".
 	Copy selection.
 
 *Escape*
-	Exit Vi mode.
+	Clear the selection, or exit Vi mode when no selection is active.
 
 ## Search
 
@@ -279,6 +285,9 @@ action = "CreateWindow"
 
 *ToggleViMode*
 	Toggle Vi mode.
+
+*ClearSelectionOrExitVi*
+	Clear the active selection, or leave Vi mode when no selection is present (Vi mode only).
 
 *Search*
 	Start search.

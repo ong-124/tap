@@ -1238,7 +1238,7 @@ impl<U: EventListener> Crosswords<U> {
 
     /// Update the active selection to match the vi mode cursor position.
     #[inline]
-    fn vi_mode_recompute_selection(&mut self) {
+    pub fn vi_mode_recompute_selection(&mut self) {
         // Require vi mode to be active.
         if !self.mode.contains(Mode::VI) {
             return;

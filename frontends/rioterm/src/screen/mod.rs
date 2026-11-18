@@ -1106,6 +1106,8 @@ impl Screen<'_> {
                     }
                     Act::Copy => {
                         self.copy_selection(ClipboardType::Clipboard, clipboard);
+                        // Mirror vi mode copies into PRIMARY for middle mouse paste.
+                        self.sync_vi_selection_clipboard(clipboard);
                     }
                     Act::SelectAll => {
                         self.select_all();
@@ -1195,6 +1197,7 @@ impl Screen<'_> {
                                 rio_backend::event::TerminalDamage::Full,
                             );
                         self.mark_dirty();
+                        self.sync_vi_selection_clipboard(clipboard);
                     }
                     Act::Vi(ViAction::CenterAroundViCursor) => {
                         let context = self.context_manager.current_mut();
@@ -1273,6 +1276,35 @@ impl Screen<'_> {
                             .set_terminal_damage(
                                 rio_backend::event::TerminalDamage::Full,
                             );
+                        self.mark_dirty();
+                    }
+                    Act::Vi(ViAction::ClearSelectionOrExit) => {
+                        // Clear the active selection; without one, leave vi mode.
+                        let (in_vi, has_selection) = {
+                            let terminal = self.context_manager.current().terminal.lock();
+                            (
+                                terminal.mode().contains(Mode::VI),
+                                terminal
+                                    .selection
+                                    .as_ref()
+                                    .is_some_and(|s| !s.is_empty()),
+                            )
+                        };
+
+                        if in_vi && !has_selection {
+                            let context = self.context_manager.current_mut();
+                            let mut terminal = context.terminal.lock();
+                            terminal.toggle_vi_mode();
+                            drop(terminal);
+                            context
+                                .renderable_content
+                                .pending_update
+                                .set_terminal_damage(
+                                    rio_backend::event::TerminalDamage::Full,
+                                );
+                        } else {
+                            self.clear_selection();
+                        }
                         self.mark_dirty();
                     }
                     Act::SplitRight => {
@@ -1364,9 +1396,23 @@ impl Screen<'_> {
                         terminal.vi_mode_cursor =
                             terminal.vi_mode_cursor.scroll(&terminal, scroll_lines);
                         terminal.scroll_display(Scroll::PageUp);
+
+                        // Expand the vi selection to follow the cursor.
+                        terminal.vi_mode_recompute_selection();
+                        if let Some(selection) = &terminal.selection {
+                            current.renderable_content.selection_range =
+                                selection.to_range(&terminal);
+                            current
+                                .renderable_content
+                                .pending_update
+                                .set_terminal_damage(
+                                    rio_backend::event::TerminalDamage::Full,
+                                );
+                        }
                         drop(terminal);
                         self.renderer.scrollbar.notify_scroll(rtid);
                         self.mark_dirty();
+                        self.sync_vi_selection_clipboard(clipboard);
                     }
                     Act::ScrollPageDown => {
                         // Move vi mode cursor.
@@ -1379,9 +1425,23 @@ impl Screen<'_> {
                             terminal.vi_mode_cursor.scroll(&terminal, scroll_lines);
 
                         terminal.scroll_display(Scroll::PageDown);
+
+                        // Expand the vi selection to follow the cursor.
+                        terminal.vi_mode_recompute_selection();
+                        if let Some(selection) = &terminal.selection {
+                            current.renderable_content.selection_range =
+                                selection.to_range(&terminal);
+                            current
+                                .renderable_content
+                                .pending_update
+                                .set_terminal_damage(
+                                    rio_backend::event::TerminalDamage::Full,
+                                );
+                        }
                         drop(terminal);
                         self.renderer.scrollbar.notify_scroll(rtid);
                         self.mark_dirty();
+                        self.sync_vi_selection_clipboard(clipboard);
                     }
                     Act::ScrollHalfPageUp => {
                         // Move vi mode cursor.
@@ -1394,9 +1454,23 @@ impl Screen<'_> {
                             terminal.vi_mode_cursor.scroll(&terminal, scroll_lines);
 
                         terminal.scroll_display(Scroll::Delta(scroll_lines));
+
+                        // Expand the vi selection to follow the cursor.
+                        terminal.vi_mode_recompute_selection();
+                        if let Some(selection) = &terminal.selection {
+                            current.renderable_content.selection_range =
+                                selection.to_range(&terminal);
+                            current
+                                .renderable_content
+                                .pending_update
+                                .set_terminal_damage(
+                                    rio_backend::event::TerminalDamage::Full,
+                                );
+                        }
                         drop(terminal);
                         self.renderer.scrollbar.notify_scroll(rtid);
                         self.mark_dirty();
+                        self.sync_vi_selection_clipboard(clipboard);
                     }
                     Act::ScrollHalfPageDown => {
                         // Move vi mode cursor.
@@ -1409,9 +1483,23 @@ impl Screen<'_> {
                             terminal.vi_mode_cursor.scroll(&terminal, scroll_lines);
 
                         terminal.scroll_display(Scroll::Delta(scroll_lines));
+
+                        // Expand the vi selection to follow the cursor.
+                        terminal.vi_mode_recompute_selection();
+                        if let Some(selection) = &terminal.selection {
+                            current.renderable_content.selection_range =
+                                selection.to_range(&terminal);
+                            current
+                                .renderable_content
+                                .pending_update
+                                .set_terminal_damage(
+                                    rio_backend::event::TerminalDamage::Full,
+                                );
+                        }
                         drop(terminal);
                         self.renderer.scrollbar.notify_scroll(rtid);
                         self.mark_dirty();
+                        self.sync_vi_selection_clipboard(clipboard);
                     }
                     Act::ScrollToTop => {
                         let current = self.context_manager.current_mut();
@@ -1422,9 +1510,22 @@ impl Screen<'_> {
                         let topmost_line = terminal.grid.topmost_line();
                         terminal.vi_mode_cursor.pos.row = topmost_line;
                         terminal.vi_motion(ViMotion::FirstOccupied);
+
+                        // Sync the selection highlight after moving the cursor.
+                        if let Some(selection) = &terminal.selection {
+                            current.renderable_content.selection_range =
+                                selection.to_range(&terminal);
+                            current
+                                .renderable_content
+                                .pending_update
+                                .set_terminal_damage(
+                                    rio_backend::event::TerminalDamage::Full,
+                                );
+                        }
                         drop(terminal);
                         self.renderer.scrollbar.notify_scroll(rtid);
                         self.mark_dirty();
+                        self.sync_vi_selection_clipboard(clipboard);
                     }
                     Act::ScrollToBottom => {
                         let current = self.context_manager.current_mut();
@@ -1438,9 +1539,22 @@ impl Screen<'_> {
                         // Move to beginning twice, to always jump across linewraps.
                         terminal.vi_motion(ViMotion::FirstOccupied);
                         terminal.vi_motion(ViMotion::FirstOccupied);
+
+                        // Sync the selection highlight after moving the cursor.
+                        if let Some(selection) = &terminal.selection {
+                            current.renderable_content.selection_range =
+                                selection.to_range(&terminal);
+                            current
+                                .renderable_content
+                                .pending_update
+                                .set_terminal_damage(
+                                    rio_backend::event::TerminalDamage::Full,
+                                );
+                        }
                         drop(terminal);
                         self.renderer.scrollbar.notify_scroll(rtid);
                         self.mark_dirty();
+                        self.sync_vi_selection_clipboard(clipboard);
                     }
                     Act::Scroll(delta) => {
                         let current = self.context_manager.current_mut();
@@ -1930,6 +2044,19 @@ impl Screen<'_> {
         clipboard.set(ty, text);
     }
 
+    /// Sync the active vi mode selection to the PRIMARY clipboard, so the
+    /// selection can be pasted with the middle mouse button.
+    fn sync_vi_selection_clipboard(&mut self, clipboard: &mut Clipboard) {
+        let should_sync = {
+            let terminal = self.context_manager.current().terminal.lock();
+            terminal.mode().contains(Mode::VI)
+                && terminal.selection.as_ref().is_some_and(|s| !s.is_empty())
+        };
+        if should_sync {
+            self.copy_selection(ClipboardType::Selection, clipboard);
+        }
+    }
+
     #[inline]
     pub fn select_all(&mut self) {
         let current = self.context_manager.current_mut();
@@ -1994,7 +2121,6 @@ impl Screen<'_> {
             Some(selection) if !selection.is_empty() => {
                 selection.ty = ty;
                 drop(terminal);
-                self.copy_selection(ClipboardType::Selection, clipboard);
             }
             _ => {
                 let pos = terminal.vi_mode_cursor.pos;
@@ -2017,6 +2143,9 @@ impl Screen<'_> {
         current.renderable_content.selection_range = selection.to_range(&terminal);
         terminal.selection = Some(selection);
         drop(terminal);
+
+        // Sync the fresh selection to PRIMARY for middle mouse paste.
+        self.sync_vi_selection_clipboard(clipboard);
     }
 
     #[inline]
