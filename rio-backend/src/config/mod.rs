@@ -275,7 +275,7 @@ pub struct CursorConfig {
 pub fn config_dir_path() -> PathBuf {
     std::env::var("RIO_CONFIG_HOME")
         .map(PathBuf::from)
-        .unwrap_or(dirs::home_dir().unwrap().join(".config").join("rio"))
+        .unwrap_or(dirs::home_dir().unwrap().join(".config").join("tap"))
 }
 
 #[cfg(target_os = "windows")]
@@ -288,7 +288,7 @@ pub fn config_dir_path() -> PathBuf {
                 .unwrap()
                 .join("AppData")
                 .join("Local")
-                .join("rio"),
+                .join("tap"),
         )
 }
 
@@ -301,7 +301,7 @@ pub fn config_dir_path() -> PathBuf {
             std::env::var("XDG_CONFIG_HOME")
                 .map(PathBuf::from)
                 .unwrap_or(dirs::home_dir().unwrap().join(".config"))
-                .join("rio"),
+                .join("tap"),
         )
 }
 

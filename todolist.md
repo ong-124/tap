@@ -25,3 +25,7 @@
   - 统一三处 TERM 设置点（rioterm main / librio pty / flatpak spawn），固定为 xterm-256color
   - 保留 COLORTERM=truecolor，本地会话回归验证（颜色、按键、vim/less/tmux）
   - ssh 远程验证（无 unknown terminal type；远端 tmux 因 Tc 丢失降 256 色为已知代价）
+- [x] 【已完成】配置文件默认位置改为 tap 目录（[详情](task/20261118-2053_配置文件默认位置改为tap目录.md)）
+  - 三平台 `config_dir_path()` 默认目录 `rio` → `tap`（Linux `~/.config/tap/config.toml`）
+  - 派生路径自动跟随（config.toml / themes / log / watcher），`RIO_CONFIG_HOME` 覆盖保留
+  - 迁移：旧 `~/.config/rio/config.toml` 需手动移动/复制到新位置
