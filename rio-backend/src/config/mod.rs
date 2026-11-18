@@ -251,6 +251,12 @@ pub struct Config {
     pub notify_on_command_finish: NotifyOnCommandFinish,
     #[serde(default = "default_bool_true", rename = "enable-scroll-bar")]
     pub enable_scroll_bar: bool,
+    /// Warp-style unified input bar at the bottom: keyboard input goes
+    /// to the bar first (inline editing + history) and a full line is
+    /// written to the PTY on Enter. Keys pass straight to the terminal
+    /// while a command is running (OSC 133 zone or alt screen).
+    #[serde(default = "default_bool_true", rename = "enable-input-bar")]
+    pub enable_input_bar: bool,
     #[serde(
         default = "default_scrollback_history_limit",
         rename = "scrollback-history-limit"
@@ -762,6 +768,7 @@ impl Default for Config {
             bell: Bell::default(),
             notify_on_command_finish: NotifyOnCommandFinish::default(),
             enable_scroll_bar: true,
+            enable_input_bar: true,
             scrollback_history_limit: default_scrollback_history_limit(),
             effects: effects::Effects::default(),
         }
@@ -841,6 +848,21 @@ mod tests {
         // Developer
         assert_eq!(result.developer.log_level, default_log_level());
         assert!(!result.developer.enable_fps_counter);
+
+        // Input bar defaults to enabled.
+        assert!(result.enable_input_bar);
+    }
+
+    #[test]
+    fn test_input_bar_can_be_disabled() {
+        let result = create_temporary_config(
+            "input-bar-off",
+            r#"
+enable-input-bar = false
+        "#,
+        );
+
+        assert!(!result.enable_input_bar);
     }
 
     #[test]

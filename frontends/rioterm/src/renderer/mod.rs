@@ -11,6 +11,7 @@ pub mod command_palette;
 pub mod confirm_quit;
 pub mod custom_cursor;
 pub mod helpers;
+pub mod input_bar;
 pub mod island;
 pub mod scrollbar;
 pub mod search;
@@ -52,7 +53,7 @@ const TOOLTIP_ORDER: u8 = 20;
 /// Truncates the tail, never the head: for a URL the scheme and host
 /// are the part worth reading before clicking, so they must survive.
 /// `measure` is injected so this stays testable without a GPU context.
-fn elide_tail(
+pub(crate) fn elide_tail(
     text: &str,
     max_width: f32,
     mut measure: impl FnMut(&str) -> f32,
@@ -179,6 +180,7 @@ pub struct Renderer {
     pub search: search::SearchOverlay,
     pub assistant: assistant::AssistantOverlay,
     pub confirm_quit: confirm_quit::ConfirmQuit,
+    pub input_bar: input_bar::InputBar,
     pub scrollbar: scrollbar::Scrollbar,
     #[allow(unused)]
     pub option_as_alt: String,
@@ -274,6 +276,7 @@ impl Renderer {
             search: search::SearchOverlay::default(),
             assistant: assistant::AssistantOverlay::default(),
             confirm_quit: confirm_quit::ConfirmQuit::default(),
+            input_bar: input_bar::InputBar::new(config.enable_input_bar),
             scrollbar: scrollbar::Scrollbar::new(config.enable_scroll_bar),
             is_game_mode_enabled: config.renderer.strategy.is_game(),
             custom_mouse_cursor: config.effects.custom_mouse_cursor,
@@ -808,6 +811,11 @@ impl Renderer {
         );
 
         self.confirm_quit.render(
+            sugarloaf,
+            (window_size.width, window_size.height, scale_factor),
+        );
+
+        self.input_bar.render(
             sugarloaf,
             (window_size.width, window_size.height, scale_factor),
         );

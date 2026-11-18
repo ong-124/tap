@@ -43,6 +43,16 @@ pub fn padding_top_from_config(
 }
 
 #[inline]
+pub fn padding_bottom_from_config(config: &Config) -> f32 {
+    config.margin.bottom
+        + if config.enable_input_bar {
+            crate::renderer::input_bar::INPUT_BAR_HEIGHT
+        } else {
+            0.0
+        }
+}
+
+#[inline]
 pub fn terminal_dimensions(layout: &ContextDimension) -> rio_backend::event::WindowSize {
     let width = layout.width - layout.margin.left - layout.margin.right;
     let height = layout.height - layout.margin.top - layout.margin.bottom;

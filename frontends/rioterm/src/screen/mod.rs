@@ -27,7 +27,10 @@ use crate::hints::HintState;
 use crate::layout::ContextDimension;
 use crate::mouse::{calculate_mouse_position, Mouse};
 use crate::renderer::island::{self, TabStripLayout, ISLAND_HEIGHT};
-use crate::renderer::{utils::padding_top_from_config, Renderer};
+use crate::renderer::{
+    utils::{padding_bottom_from_config, padding_top_from_config},
+    Renderer,
+};
 use crate::selection::{Selection, SelectionType};
 use core::fmt::Debug;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -154,7 +157,7 @@ impl Screen<'_> {
             config.window.macos_use_unified_titlebar,
         );
 
-        let padding_y_bottom = config.margin.bottom;
+        let padding_y_bottom = padding_bottom_from_config(config);
         let sugarloaf_layout =
             RootStyle::new(scale as f32, config.fonts.size, config.line_height);
 
@@ -413,6 +416,19 @@ impl Screen<'_> {
     /// input drops it (`send_write`), search typing drops it only
     /// outside vi mode (`search_input` keeps a vi visual selection).
     pub fn set_ime_preedit(&mut self, preedit: Option<crate::ime::Preedit>) -> bool {
+        // While the input bar owns input, composition happens there:
+        // the ghost text renders next to the bar caret and the grid is
+        // left untouched.
+        if self.input_bar_active(&self.get_mode()) && !self.search_active() {
+            let new_text = preedit.as_ref().map(|p| p.text.clone());
+            let changed = self.renderer.input_bar.preedit_text() != new_text;
+            if changed {
+                self.renderer.input_bar.set_preedit(new_text);
+                self.mark_dirty();
+            }
+            return changed;
+        }
+
         let composing = preedit.is_some();
         let changed = self.ime.preedit() != preedit.as_ref();
         if changed {
@@ -526,7 +542,7 @@ impl Screen<'_> {
             num_tabs,
             config.window.macos_use_unified_titlebar,
         );
-        let padding_y_bottom = config.margin.bottom;
+        let padding_y_bottom = padding_bottom_from_config(config);
 
         if should_update_font_library {
             self.sugarloaf.update_font(font_library);
@@ -553,9 +569,14 @@ impl Screen<'_> {
 
         // Preserve existing Island (tab state) and update its colors
         let old_island = self.renderer.island.take();
+        // Same for the input bar: a config edit mid-composition must
+        // not drop the buffer or history.
+        let mut old_input_bar = std::mem::take(&mut self.renderer.input_bar);
         let was_focused = self.renderer.is_window_focused;
         self.renderer = Renderer::new(config);
         self.renderer.is_window_focused = was_focused;
+        old_input_bar.set_enabled(config.enable_input_bar);
+        self.renderer.input_bar = old_input_bar;
         // Every terminal answers color queries from the palette; give
         // them the new one.
         let colors = rio_backend::config::colors::term::List::from(&config.colors);
@@ -812,7 +833,7 @@ impl Screen<'_> {
         key: &rio_window::event::KeyEvent,
         clipboard: &mut Clipboard,
     ) {
-        if self.ime.preedit().is_some() {
+        if self.ime.preedit().is_some() || self.renderer.input_bar.has_preedit() {
             return;
         }
 
@@ -824,6 +845,7 @@ impl Screen<'_> {
                 || mode.contains(Mode::VI)
                 || self.search_active()
                 || self.hint_state.is_active()
+                || self.input_bar_active(&mode)
             {
                 return;
             }
@@ -920,6 +942,15 @@ impl Screen<'_> {
             return;
         }
 
+        // Unified input bar: at a shell prompt the line is composed
+        // here and only a full line reaches the PTY on Enter. Whatever
+        // the bar does not consume (control combos, Tab, Escape, ...)
+        // falls through to the terminal encoding below.
+        if self.process_input_bar_key(key, text, mods, &mode) {
+            self.mark_dirty();
+            return;
+        }
+
         // Mask `Alt` modifier from input when we won't send esc.
         let mods = if self.alt_send_esc(key, text) {
             mods
@@ -976,6 +1007,134 @@ impl Screen<'_> {
 
             self.ctx_mut().current_mut().messenger.send_write(bytes);
         }
+    }
+
+    /// Whether the unified input bar currently owns character input:
+    /// enabled, and the focused pane sits at a shell prompt (OSC 133
+    /// zone; shells without marks degrade to always-at-prompt) outside
+    /// the alt screen.
+    fn input_bar_active(&self, mode: &Mode) -> bool {
+        self.renderer.input_bar.is_enabled() && !self.input_bar_locked(mode)
+    }
+
+    /// The bar steps aside while a command runs: no OSC 133 prompt
+    /// zone, or a full-screen program took over the grid.
+    fn input_bar_locked(&self, mode: &Mode) -> bool {
+        let terminal = self.context_manager.current().terminal.lock();
+        !terminal.at_prompt() || mode.contains(Mode::ALT_SCREEN)
+    }
+
+    /// Route a key press to the unified input bar. Returns `true` when
+    /// the bar consumed it and the caller should redraw; `false` lets
+    /// the normal terminal encoding take over (control combos, Tab,
+    /// Escape, alt-modified keys, ... all pass through).
+    fn process_input_bar_key(
+        &mut self,
+        key: &rio_window::event::KeyEvent,
+        text: &str,
+        mods: ModifiersState,
+        mode: &Mode,
+    ) -> bool {
+        if !self.input_bar_active(mode) {
+            return false;
+        }
+
+        if mods.is_empty() {
+            match key.logical_key.as_ref() {
+                Key::Named(NamedKey::Enter) => {
+                    self.submit_input_bar_line();
+                    return true;
+                }
+                Key::Named(NamedKey::Backspace) => {
+                    self.renderer.input_bar.backspace();
+                    return true;
+                }
+                Key::Named(NamedKey::Delete) => {
+                    self.renderer.input_bar.delete_forward();
+                    return true;
+                }
+                Key::Named(NamedKey::ArrowLeft) => {
+                    self.renderer.input_bar.move_left();
+                    return true;
+                }
+                Key::Named(NamedKey::ArrowRight) => {
+                    self.renderer.input_bar.move_right();
+                    return true;
+                }
+                Key::Named(NamedKey::Home) => {
+                    self.renderer.input_bar.move_home();
+                    return true;
+                }
+                Key::Named(NamedKey::End) => {
+                    self.renderer.input_bar.move_end();
+                    return true;
+                }
+                // History browsing, like every readline.
+                Key::Named(NamedKey::ArrowUp) => {
+                    self.renderer.input_bar.history_previous();
+                    return true;
+                }
+                Key::Named(NamedKey::ArrowDown) => {
+                    self.renderer.input_bar.history_next();
+                    return true;
+                }
+                _ => {}
+            }
+        }
+
+        // Exactly Ctrl held: the line-editing combos. Everything else
+        // passes through so Ctrl+C still interrupts and Ctrl+D still
+        // sends EOF.
+        if mods == ModifiersState::CONTROL {
+            let lower = match key.logical_key.as_ref() {
+                Key::Character(c) => c.to_lowercase(),
+                _ => String::new(),
+            };
+            match lower.as_str() {
+                "w" => {
+                    self.renderer.input_bar.delete_word_backwards();
+                    return true;
+                }
+                "u" => {
+                    self.renderer.input_bar.delete_to_line_start();
+                    return true;
+                }
+                // Ctrl+C interrupts what the shell is showing; the
+                // half-composed line no longer matches the prompt.
+                "c" => {
+                    self.renderer.input_bar.clear();
+                    return false;
+                }
+                _ => return false,
+            }
+        }
+
+        // Plain printable text joins the line.
+        if !mods.control_key()
+            && !mods.alt_key()
+            && !mods.super_key()
+            && crate::renderer::is_printable_text(text)
+        {
+            self.renderer.input_bar.insert_text(text);
+            return true;
+        }
+
+        false
+    }
+
+    /// Hand the composed line to the focused pane's PTY as if it had
+    /// been typed: the full line plus a carriage return.
+    fn submit_input_bar_line(&mut self) {
+        let line = self.renderer.input_bar.take_submitted_line();
+        if self.context_manager.close_if_exited() {
+            return;
+        }
+        self.scroll_bottom_when_cursor_not_visible();
+        self.clear_selection();
+
+        let mut bytes = line.into_bytes();
+        bytes.push(b'\r');
+        self.ctx_mut().current_mut().messenger.send_write(bytes);
     }
 
     /// Check whether we should try to build escape sequence for the [`KeyEvent`].
@@ -1873,7 +2032,8 @@ impl Screen<'_> {
             num_tabs,
             self.renderer.macos_use_unified_titlebar,
         );
-        let padding_y_bottom = self.renderer.margin.bottom;
+        let padding_y_bottom =
+            self.renderer.margin.bottom + self.renderer.input_bar.height();
 
         let scale = self.sugarloaf.scale_factor();
         let scaled_top = padding_y_top * scale;
@@ -3813,6 +3973,15 @@ impl Screen<'_> {
             return;
         }
 
+        // While the input bar owns input, paste joins the composed
+        // line instead of reaching the PTY (clipboard, middle-click
+        // and multi-char IME commits all land here).
+        if !text.is_empty() && self.input_bar_active(&self.get_mode()) {
+            self.renderer.input_bar.insert_text(text);
+            self.mark_dirty();
+            return;
+        }
+
         if !text.is_empty() && self.context_manager.close_if_exited() {
             return;
         }
@@ -3996,6 +4165,19 @@ impl Screen<'_> {
             }
         } else {
             self.renderer.set_active_search(None);
+        }
+
+        // Sync the input bar lock with the focused pane's zone before
+        // the overlay pass draws it.
+        if self.renderer.input_bar.is_enabled() {
+            let (at_prompt, alt_screen) = {
+                let terminal = self.context_manager.current().terminal.lock();
+                (
+                    terminal.at_prompt(),
+                    terminal.mode().contains(Mode::ALT_SCREEN),
+                )
+            };
+            self.renderer.input_bar.set_locked(!at_prompt || alt_screen);
         }
 
         if is_search_active {
@@ -4780,6 +4962,14 @@ impl Screen<'_> {
         if let Some(wake_in) = self.renderer.scrollbar.next_wake_in() {
             self.context_manager
                 .schedule_render_on_route(wake_in.as_millis() as u64);
+        }
+
+        // Input bar caret blink: wake at the next visibility flip.
+        if self.renderer.is_window_focused {
+            if let Some(wake_in) = self.renderer.input_bar.next_wake_in() {
+                self.context_manager
+                    .schedule_render_on_route(wake_in.as_millis() as u64);
+            }
         }
 
         // In case the configuration of blinking cursor is enabled

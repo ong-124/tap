@@ -124,6 +124,17 @@ bitflags! {
     }
 }
 
+/// Which shell-integration zone (OSC 133) the terminal is in: waiting
+/// at a prompt, or running a command. Hosts use this to route keyboard
+/// input between an input bar and the terminal itself. Starts at
+/// `Prompt` so shells without integration degrade to "at prompt".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InputZone {
+    #[default]
+    Prompt,
+    Running,
+}
+
 /// The state of the [`Mode`] and [`PrivateMode`].
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
@@ -621,6 +632,10 @@ where
     /// so `D` can report how long it ran. `None` between commands.
     command_started_at: Option<crate::time::Instant>,
 
+    /// Current shell-integration zone (OSC 133 `A`/`C`). Drives host-side
+    /// keyboard routing; see [`InputZone`].
+    input_zone: InputZone,
+
     /// What DECRQM callers see after a full reset: the
     /// consumer-configured default for grapheme clustering (mode
     /// 2027). On by default; embedders serving legacy wcwidth
@@ -706,6 +721,7 @@ impl<U: EventListener> Crosswords<U> {
             program_status_seen: false,
             glyph_grapheme_query: false,
             command_started_at: None,
+            input_zone: InputZone::Prompt,
             modify_other_keys: 0,
             keyboard_mode_stack: Default::default(),
             keyboard_mode_idx: 0,
@@ -880,6 +896,15 @@ impl<U: EventListener> Crosswords<U> {
     #[inline]
     pub fn clear_saved_history(&mut self) {
         self.clear_screen(ClearMode::Saved);
+    }
+
+    /// Whether the terminal is in the OSC 133 "prompt" zone (the shell
+    /// is waiting for a command) rather than running one. Shells
+    /// without integration never emit marks, so this stays `true` and
+    /// hosts treat the terminal as always-at-prompt.
+    #[inline]
+    pub fn at_prompt(&self) -> bool {
+        self.input_zone == InputZone::Prompt
     }
 
     /// Scroll so the previous (`forward = false`) or next prompt row
@@ -3889,6 +3914,14 @@ impl<U: EventListener> Handler for Crosswords<U> {
     }
 
     fn prompt_start(&mut self) {
+        // Zone tracking first: unlike the program-status event below, a
+        // nested prompt (a shell on an `ssh` host) *is* where the user
+        // types next, so for input routing the flip is the desired
+        // behavior.
+        if self.input_zone != InputZone::Prompt {
+            self.input_zone = InputZone::Prompt;
+            self.request_render();
+        }
         // A running command stays open across `A`: a program that
         // draws prompts of its own (a shell on an `ssh` host, a nested
         // shell) must not make the shell's eventual `D` go unreported.
@@ -3903,6 +3936,10 @@ impl<U: EventListener> Handler for Crosswords<U> {
     }
 
     fn command_start(&mut self) {
+        if self.input_zone != InputZone::Running {
+            self.input_zone = InputZone::Running;
+            self.request_render();
+        }
         // A repeated `C` restarts the clock: the latest output mark is
         // the one whose `D` will follow.
         self.command_started_at = Some(crate::time::Instant::now());
@@ -6560,6 +6597,34 @@ mod tests {
         // `N` with nothing open is just a prompt.
         parser.advance(&mut cw, b"\x1b]133;N\x07$ ");
         assert_eq!(finished_commands(&events).len(), 2);
+    }
+
+    /// The input zone follows OSC 133 `A`/`C` marks and starts at
+    /// `Prompt`, so shells without integration always look at-prompt.
+    #[test]
+    fn osc_133_input_zone_tracking() {
+        let (mut cw, _events) = make_crosswords_with_events(0);
+        let mut parser = crate::performer::handler::Processor::default();
+
+        // No marks yet: at prompt (the no-integration degradation).
+        assert!(cw.at_prompt());
+
+        // A command starts: not at prompt until the next `A`/`N`.
+        parser.advance(&mut cw, b"\x1b]133;C\x07output\r\n");
+        assert!(!cw.at_prompt());
+        // `D` alone does not return to the prompt zone.
+        parser.advance(&mut cw, b"\x1b]133;D;0\x07");
+        assert!(!cw.at_prompt());
+
+        // Fresh prompt flips back; a repeat `A` keeps it.
+        parser.advance(&mut cw, b"\x1b]133;A\x07$ ");
+        assert!(cw.at_prompt());
+        parser.advance(&mut cw, b"\x1b]133;A\x07$ ");
+        assert!(cw.at_prompt());
+
+        // `N` behaves like a new prompt for the zone too.
+        parser.advance(&mut cw, b"\x1b]133;C\x07\x1b]133;N\x07$ ");
+        assert!(cw.at_prompt());
     }
 
     #[test]
