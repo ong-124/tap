@@ -5,12 +5,12 @@ use sugarloaf::ImageProperties;
 
 #[derive(Default, Clone, Serialize, Deserialize, Copy, Debug, PartialEq)]
 pub enum WindowMode {
+    #[default]
     #[serde(alias = "maximized")]
     Maximized,
     #[serde(alias = "fullscreen")]
     Fullscreen,
     // Windowed will use width and height definition
-    #[default]
     #[serde(alias = "windowed")]
     Windowed,
 }

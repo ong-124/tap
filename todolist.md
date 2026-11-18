@@ -29,3 +29,7 @@
   - 三平台 `config_dir_path()` 默认目录 `rio` → `tap`（Linux `~/.config/tap/config.toml`）
   - 派生路径自动跟随（config.toml / themes / log / watcher），`RIO_CONFIG_HOME` 覆盖保留
   - 迁移：旧 `~/.config/rio/config.toml` 需手动移动/复制到新位置
+- [x] 【已完成】默认配置固化（字体/字号/窗口/透明度）（[详情](task/20261118-2059_默认配置固化字体字号窗口.md)）
+  - 字号默认 18，字体默认 Fira Code SemiBold（family 覆盖全部 slot，缺失时 warning + 内置兜底）
+  - 窗口默认 Maximized，窗口透明度默认 0.8；配合默认背景图实现无配置文件开箱即用
+  - 验证：config 88 测试 + sugarloaf 138 测试通过，待用户冷启动实测

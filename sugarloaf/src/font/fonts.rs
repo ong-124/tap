@@ -108,7 +108,7 @@ impl SugarloafFont {
 
 #[inline]
 pub fn default_font_size() -> f32 {
-    14.
+    18.
 }
 
 #[inline]
@@ -128,6 +128,17 @@ fn default_font_family() -> String {
     DEFAULT_FONT_FAMILY.to_string()
 }
 
+/// Default top-level font-family override for this fork. Applied to
+/// every slot (regular/bold/italic/bold-italic) by the font library
+/// init — see `font::mod` "If fonts.family does exist it will
+/// overwrite all families". Deliberately NOT `DEFAULT_FONT_FAMILY`:
+/// that constant identifies the bundled Cascadia Code fallback, and
+/// matching it would skip the system font search entirely.
+#[inline]
+fn default_family_override() -> Option<String> {
+    Some(String::from("Fira Code SemiBold"))
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct SugarloafFonts {
     #[serde(default = "default_font_size")]
@@ -136,7 +147,7 @@ pub struct SugarloafFonts {
     pub hinting: bool,
     #[serde(default = "Option::default")]
     pub features: Option<Vec<String>>,
-    #[serde(default = "Option::default")]
+    #[serde(default = "default_family_override")]
     pub family: Option<String>,
     #[serde(default)]
     pub regular: SugarloafFont,
@@ -172,7 +183,7 @@ impl Default for SugarloafFonts {
             features: None,
             hinting: true,
             size: default_font_size(),
-            family: None,
+            family: default_family_override(),
             regular: SugarloafFont::default(),
             bold: SugarloafFont::default(),
             bold_italic: SugarloafFont::default(),

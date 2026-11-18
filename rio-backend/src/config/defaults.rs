@@ -78,7 +78,7 @@ pub fn default_working_dir() -> Option<String> {
 
 #[inline]
 pub fn default_opacity() -> f32 {
-    1.0
+    0.8
 }
 
 #[inline]
