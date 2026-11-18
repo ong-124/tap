@@ -19,15 +19,23 @@ fn color_u8(c: [f32; 4]) -> [u8; 4] {
     ]
 }
 
-// Layout
-pub const INPUT_BAR_HEIGHT: f32 = 36.0;
-const PADDING_X: f32 = 10.0;
-const PROMPT_GAP: f32 = 8.0;
-const INPUT_FONT_SIZE: f32 = 14.0;
+// Layout: the bar is sized relative to the terminal — six terminal
+// lines tall, text at twice the terminal font size. Metrics are set
+// from Screen::new / update_config / change_font_size via
+// `update_metrics`.
+pub const INPUT_BAR_LINES: f32 = 6.0;
+pub const INPUT_FONT_SCALE: f32 = 2.0;
 
-const CARET_WIDTH: f32 = 1.5;
+const PANEL_INSET_X: f32 = 8.0;
+const PANEL_INSET_Y: f32 = 4.0;
+const BORDER_STROKE: f32 = 4.0;
+const BORDER_RADIUS: f32 = 12.0;
+const TEXT_PADDING_X: f32 = 12.0;
+const PROMPT_GAP: f32 = 10.0;
+
+const CARET_WIDTH: f32 = 2.0;
 const CARET_BLINK_MS: u128 = 500;
-const PREEDIT_UNDERLINE_HEIGHT: f32 = 1.0;
+const PREEDIT_UNDERLINE_HEIGHT: f32 = 2.0;
 
 /// Kept in memory only, mirroring the search history limit.
 pub const MAX_HISTORY: usize = 255;
@@ -35,10 +43,10 @@ pub const MAX_HISTORY: usize = 255;
 const PROMPT_SYMBOL: &str = "\u{276F}";
 const LOCKED_HINT: &str = "keys pass through";
 
-// Colors
-const BG_COLOR: [f32; 4] = [0.11, 0.11, 0.11, 0.98];
-const LOCKED_BG_COLOR: [f32; 4] = [0.07, 0.07, 0.07, 0.98];
-const SEPARATOR_COLOR: [f32; 4] = [0.20, 0.20, 0.20, 1.0];
+// Colors. The panel itself shares the window background; only the
+// thick border ring is the bar's own paint.
+const BORDER_COLOR: [f32; 4] = [0.85, 0.85, 0.85, 0.32];
+const LOCKED_BORDER_COLOR: [f32; 4] = [0.55, 0.55, 0.55, 0.14];
 const TEXT_COLOR: [f32; 4] = [0.93, 0.93, 0.93, 1.0];
 const DIM_TEXT_COLOR: [f32; 4] = [0.50, 0.50, 0.50, 1.0];
 const PROMPT_COLOR: [f32; 4] = [0.42, 0.78, 0.42, 1.0];
@@ -57,6 +65,10 @@ const ORDER: u8 = 20;
 pub struct InputBar {
     enabled: bool,
     locked: bool,
+    /// Input text size in logical px (INPUT_FONT_SCALE × terminal).
+    font_size: f32,
+    /// Reserved height in logical px (INPUT_BAR_LINES × cell height).
+    height_px: f32,
     buffer: String,
     /// Cursor position in chars.
     cursor: usize,
@@ -76,6 +88,8 @@ impl Default for InputBar {
         Self {
             enabled: false,
             locked: false,
+            font_size: 0.0,
+            height_px: 0.0,
             buffer: String::new(),
             cursor: 0,
             view_start: 0,
@@ -110,10 +124,30 @@ impl InputBar {
     #[inline]
     pub fn height(&self) -> f32 {
         if self.enabled {
-            INPUT_BAR_HEIGHT
+            self.height_px
         } else {
             0.0
         }
+    }
+
+    /// Pure metrics setter (testable without a GPU): `font_size` is
+    /// the terminal's, `cell_height` one terminal line in logical px.
+    pub fn set_metrics(&mut self, font_size: f32, cell_height: f32) {
+        self.font_size = font_size * INPUT_FONT_SCALE;
+        self.height_px = cell_height * INPUT_BAR_LINES;
+    }
+
+    /// Recompute size from the terminal's live font: the bar is six
+    /// terminal lines tall with twice the terminal font size.
+    pub fn update_metrics(
+        &mut self,
+        sugarloaf: &Sugarloaf,
+        font_size: f32,
+        line_height: f32,
+    ) {
+        let scale = sugarloaf.scale_factor();
+        let (_, cell) = sugarloaf.compute_cell_metrics(font_size, line_height, scale);
+        self.set_metrics(font_size, cell.cell_height as f32 / scale);
     }
 
     /// Update the lock state from the focused pane's zone. Unlocking
@@ -346,8 +380,13 @@ impl InputBar {
         ))
     }
 
-    pub fn render(&mut self, sugarloaf: &mut Sugarloaf, dimensions: (f32, f32, f32)) {
-        if !self.enabled {
+    pub fn render(
+        &mut self,
+        sugarloaf: &mut Sugarloaf,
+        dimensions: (f32, f32, f32),
+        window_bg: [f32; 4],
+    ) {
+        if !self.enabled || self.height_px <= 0.0 || self.font_size <= 0.0 {
             // Immediate mode: not drawing == not visible.
             return;
         }
@@ -355,50 +394,63 @@ impl InputBar {
         let (window_width, window_height, scale_factor) = dimensions;
         let logical_width = window_width / scale_factor;
         let logical_height = window_height / scale_factor;
-        let bar_y = logical_height - INPUT_BAR_HEIGHT;
-        let text_y = bar_y + (INPUT_BAR_HEIGHT - INPUT_FONT_SIZE) / 2.0;
 
-        // Background and top separator. The lock state dims the bar.
-        let bg = if self.locked {
-            LOCKED_BG_COLOR
+        // Framed panel floating inside the reserved band. The inner
+        // fill is the shared window background — the bar carries no
+        // paint of its own except the thick translucent border ring.
+        let panel_x = PANEL_INSET_X;
+        let panel_y = logical_height - self.height_px + PANEL_INSET_Y;
+        let panel_w = (logical_width - PANEL_INSET_X * 2.0).max(0.0);
+        let panel_h = (self.height_px - PANEL_INSET_Y * 2.0).max(0.0);
+
+        let border = if self.locked {
+            LOCKED_BORDER_COLOR
         } else {
-            BG_COLOR
+            BORDER_COLOR
         };
-        sugarloaf.rect(
+        sugarloaf.rounded_rect(
             None,
-            0.0,
-            bar_y,
-            logical_width,
-            INPUT_BAR_HEIGHT,
-            bg,
+            panel_x,
+            panel_y,
+            panel_w,
+            panel_h,
+            border,
             DEPTH_BG,
+            BORDER_RADIUS,
             ORDER,
         );
-        sugarloaf.rect(
+        sugarloaf.rounded_rect(
             None,
-            0.0,
-            bar_y,
-            logical_width,
-            1.0,
-            SEPARATOR_COLOR,
-            DEPTH_ELEMENT,
+            panel_x + BORDER_STROKE,
+            panel_y + BORDER_STROKE,
+            (panel_w - BORDER_STROKE * 2.0).max(0.0),
+            (panel_h - BORDER_STROKE * 2.0).max(0.0),
+            window_bg,
+            DEPTH_BG,
+            (BORDER_RADIUS - BORDER_STROKE).max(0.0),
             ORDER,
         );
+
+        let font_size = self.font_size;
+        let text_y = panel_y + (panel_h - font_size) / 2.0;
+        let content_x = panel_x + BORDER_STROKE + TEXT_PADDING_X;
+        let content_right = panel_x + panel_w - BORDER_STROKE - TEXT_PADDING_X;
 
         // Locked: only the hint that keys go to the terminal.
         if self.locked {
             let hint_opts = DrawOpts {
-                font_size: INPUT_FONT_SIZE,
+                font_size,
                 color: color_u8(DIM_TEXT_COLOR),
                 ..DrawOpts::default()
             };
+            let max_hint_width = (content_right - content_x).max(0.0);
             let hint =
-                crate::renderer::elide_tail(LOCKED_HINT, logical_width * 0.4, |s| {
+                crate::renderer::elide_tail(LOCKED_HINT, max_hint_width * 0.5, |s| {
                     sugarloaf.text_mut().measure(s, &hint_opts)
                 });
             let hint_width = sugarloaf.text_mut().measure(&hint, &hint_opts);
             sugarloaf.text_mut().draw(
-                logical_width - PADDING_X - hint_width,
+                content_right - hint_width,
                 text_y,
                 &hint,
                 &hint_opts,
@@ -408,26 +460,26 @@ impl InputBar {
 
         // Prompt symbol.
         let prompt_opts = DrawOpts {
-            font_size: INPUT_FONT_SIZE,
+            font_size,
             color: color_u8(PROMPT_COLOR),
             ..DrawOpts::default()
         };
         let prompt_width =
             sugarloaf
                 .text_mut()
-                .draw(PADDING_X, text_y, PROMPT_SYMBOL, &prompt_opts);
-        let text_x = PADDING_X + prompt_width + PROMPT_GAP;
+                .draw(content_x, text_y, PROMPT_SYMBOL, &prompt_opts);
+        let text_x = content_x + prompt_width + PROMPT_GAP;
 
         // Right edge of the text area.
-        let max_text_width = (logical_width - text_x - PADDING_X).max(0.0);
+        let max_text_width = (content_right - text_x).max(0.0);
 
         let opts = DrawOpts {
-            font_size: INPUT_FONT_SIZE,
+            font_size,
             color: color_u8(TEXT_COLOR),
             ..DrawOpts::default()
         };
         let preedit_opts = DrawOpts {
-            font_size: INPUT_FONT_SIZE,
+            font_size,
             color: color_u8(PREEDIT_TEXT_COLOR),
             ..DrawOpts::default()
         };
@@ -489,7 +541,7 @@ impl InputBar {
             sugarloaf.rect(
                 None,
                 caret_x,
-                text_y + INPUT_FONT_SIZE,
+                text_y + font_size,
                 preedit_width,
                 PREEDIT_UNDERLINE_HEIGHT,
                 PREEDIT_TEXT_COLOR,
@@ -511,7 +563,7 @@ impl InputBar {
                 caret_x,
                 text_y,
                 CARET_WIDTH,
-                INPUT_FONT_SIZE,
+                font_size,
                 TEXT_COLOR,
                 DEPTH_ELEMENT,
                 ORDER,
@@ -662,10 +714,18 @@ mod tests {
     }
 
     #[test]
-    fn height_follows_enabled() {
+    fn height_follows_enabled_and_metrics() {
         let mut bar = InputBar::new(false);
-        assert_eq!(bar.height(), 0.0);
+        bar.set_metrics(18.0, 21.5);
+        assert_eq!(bar.height(), 0.0, "disabled reserves nothing");
+
         bar.set_enabled(true);
-        assert_eq!(bar.height(), INPUT_BAR_HEIGHT);
+        // Six terminal lines tall, twice the terminal font size.
+        assert_eq!(bar.height(), 21.5 * INPUT_BAR_LINES);
+        assert_eq!(bar.font_size, 18.0 * INPUT_FONT_SCALE);
+
+        bar.set_metrics(24.0, 26.0);
+        assert_eq!(bar.height(), 26.0 * INPUT_BAR_LINES);
+        assert_eq!(bar.font_size, 24.0 * INPUT_FONT_SCALE);
     }
 }

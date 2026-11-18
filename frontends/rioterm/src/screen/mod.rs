@@ -27,10 +27,7 @@ use crate::hints::HintState;
 use crate::layout::ContextDimension;
 use crate::mouse::{calculate_mouse_position, Mouse};
 use crate::renderer::island::{self, TabStripLayout, ISLAND_HEIGHT};
-use crate::renderer::{
-    utils::{padding_bottom_from_config, padding_top_from_config},
-    Renderer,
-};
+use crate::renderer::{utils::padding_top_from_config, Renderer};
 use crate::selection::{Selection, SelectionType};
 use core::fmt::Debug;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -157,7 +154,7 @@ impl Screen<'_> {
             config.window.macos_use_unified_titlebar,
         );
 
-        let padding_y_bottom = padding_bottom_from_config(config);
+        let padding_y_bottom = config.margin.bottom;
         let sugarloaf_layout =
             RootStyle::new(scale as f32, config.fonts.size, config.line_height);
 
@@ -235,6 +232,14 @@ impl Screen<'_> {
         sugarloaf.update_filters(config.renderer.filters.as_slice());
 
         let mut renderer = Renderer::new(config);
+        // Size the input bar from the terminal's own metrics before
+        // the layout reserves its height.
+        renderer.input_bar.update_metrics(
+            &sugarloaf,
+            config.fonts.size,
+            config.line_height,
+        );
+        let padding_y_bottom = config.margin.bottom + renderer.input_bar.height();
 
         let bindings = crate::bindings::default_key_bindings(config);
 
@@ -542,7 +547,6 @@ impl Screen<'_> {
             num_tabs,
             config.window.macos_use_unified_titlebar,
         );
-        let padding_y_bottom = padding_bottom_from_config(config);
 
         if should_update_font_library {
             self.sugarloaf.update_font(font_library);
@@ -577,6 +581,14 @@ impl Screen<'_> {
         self.renderer.is_window_focused = was_focused;
         old_input_bar.set_enabled(config.enable_input_bar);
         self.renderer.input_bar = old_input_bar;
+        // Bar size follows the (possibly new) font metrics, and the
+        // margin below uses the refreshed height.
+        self.renderer.input_bar.update_metrics(
+            &self.sugarloaf,
+            config.fonts.size,
+            config.line_height,
+        );
+        let padding_y_bottom = config.margin.bottom + self.renderer.input_bar.height();
         // Every terminal answers color queries from the palette; give
         // them the new one.
         let colors = rio_backend::config::colors::term::List::from(&config.colors);
@@ -693,6 +705,30 @@ impl Screen<'_> {
         self.context_manager
             .current_grid_mut()
             .update_dimensions(&self.sugarloaf);
+
+        // The input bar sizes itself from the terminal font; keep the
+        // reserved margin in step with the new size.
+        if self.renderer.input_bar.is_enabled() {
+            let (font_size, line_height) = {
+                let dim = &self.context_manager.current().dimension;
+                (dim.font_size, dim.line_height)
+            };
+            self.renderer.input_bar.update_metrics(
+                &self.sugarloaf,
+                font_size,
+                line_height,
+            );
+            let scale = self.sugarloaf.scale_factor();
+            let grid = self.context_manager.current_grid_mut();
+            let margin = grid.scaled_margin;
+            grid.update_scaled_margin(Margin::new(
+                margin.top,
+                margin.right,
+                (self.renderer.margin.bottom + self.renderer.input_bar.height()) * scale,
+                margin.left,
+            ));
+            grid.update_dimensions(&self.sugarloaf);
+        }
 
         self.mark_dirty();
         self.refresh_titles();
@@ -1039,6 +1075,18 @@ impl Screen<'_> {
             return false;
         }
 
+        // Backspace family in every modifier shape the default
+        // bindings otherwise claim: plain/Shift delete a char,
+        // Ctrl/Alt delete the word before the cursor (readline).
+        if let Key::Named(NamedKey::Backspace) = key.logical_key.as_ref() {
+            if mods.control_key() || mods.alt_key() {
+                self.renderer.input_bar.delete_word_backwards();
+            } else {
+                self.renderer.input_bar.backspace();
+            }
+            return true;
+        }
+
         if mods.is_empty() {
             match key.logical_key.as_ref() {
                 Key::Named(NamedKey::Enter) => {
@@ -1175,7 +1223,7 @@ impl Screen<'_> {
         clipboard: &mut Clipboard,
     ) {
         let mode = self.get_mode();
-        let binding_mode = BindingMode::new(&mode, self.search_active());
+        let binding_mode = BindingMode::new(&mode, self.search_active(), false);
         let mouse_mode = self.mouse_mode();
         let mods = self.modifiers.state();
 
@@ -1204,7 +1252,8 @@ impl Screen<'_> {
         clipboard: &mut Clipboard,
     ) -> bool {
         let search_active = self.search_active();
-        let binding_mode = BindingMode::new(mode, search_active);
+        let binding_mode =
+            BindingMode::new(mode, search_active, self.input_bar_active(mode));
         let mut ignore_chars = None;
 
         for i in 0..self.bindings.len() {

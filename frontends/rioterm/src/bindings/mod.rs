@@ -162,11 +162,14 @@ bitflags! {
         const SEARCH              = 0b0001_0000;
         const DISAMBIGUATE_KEYS   = 0b0010_0000;
         const ALL_KEYS_AS_ESC     = 0b0100_0000;
+        /// The unified input bar owns character input: line-editing
+        /// keys (Backspace, ...) belong to the bar, not the PTY.
+        const INPUT_BAR           = 0b1000_0000;
     }
 }
 
 impl BindingMode {
-    pub fn new(mode: &Mode, search: bool) -> BindingMode {
+    pub fn new(mode: &Mode, search: bool, input_bar: bool) -> BindingMode {
         let mut binding_mode = BindingMode::empty();
         binding_mode.set(BindingMode::APP_CURSOR, mode.contains(Mode::APP_CURSOR));
         binding_mode.set(BindingMode::APP_KEYPAD, mode.contains(Mode::APP_KEYPAD));
@@ -181,6 +184,7 @@ impl BindingMode {
             mode.contains(Mode::REPORT_ALL_KEYS_AS_ESC),
         );
         binding_mode.set(BindingMode::VI, mode.contains(Mode::VI));
+        binding_mode.set(BindingMode::INPUT_BAR, input_bar);
         binding_mode
     }
 }
@@ -769,12 +773,12 @@ pub fn default_key_bindings(config: &rio_backend::config::Config) -> Vec<KeyBind
         Key::Named(ArrowRight), ~BindingMode::APP_CURSOR, ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC; Action::Esc("\x1b[C".into());
         Key::Named(ArrowLeft),  ~BindingMode::APP_CURSOR, ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC; Action::Esc("\x1b[D".into());
         Key::Named(Insert),     ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_KEYS; Action::Esc("\x1b[2~".into());
-        Key::Named(Delete),     ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_KEYS; Action::Esc("\x1b[3~".into());
+        Key::Named(Delete),     ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_KEYS, ~BindingMode::INPUT_BAR; Action::Esc("\x1b[3~".into());
         Key::Named(PageUp),     ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_KEYS; Action::Esc("\x1b[5~".into());
         Key::Named(PageDown),   ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_KEYS; Action::Esc("\x1b[6~".into());
-        Key::Named(Backspace),  ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC; Action::Esc("\x7f".into());
-        Key::Named(Backspace), ModifiersState::ALT,     ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_KEYS; Action::Esc("\x1b\x7f".into());
-        Key::Named(Backspace), ModifiersState::SHIFT,   ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_KEYS; Action::Esc("\x7f".into());
+        Key::Named(Backspace),  ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::INPUT_BAR; Action::Esc("\x7f".into());
+        Key::Named(Backspace), ModifiersState::ALT,     ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_KEYS, ~BindingMode::INPUT_BAR; Action::Esc("\x1b\x7f".into());
+        Key::Named(Backspace), ModifiersState::SHIFT,   ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_KEYS, ~BindingMode::INPUT_BAR; Action::Esc("\x7f".into());
         Key::Named(F1), ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_KEYS; Action::Esc("\x1bOP".into());
         Key::Named(F2), ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_KEYS; Action::Esc("\x1bOQ".into());
         Key::Named(F3), ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_KEYS; Action::Esc("\x1bOR".into());
@@ -1322,7 +1326,7 @@ pub fn platform_key_bindings(
         // This is actually a Windows Powershell shortcut
         // https://github.com/alacritty/alacritty/issues/2930
         // https://github.com/raphamorim/rio/issues/220#issuecomment-1761651339
-        Key::Named(Backspace), ModifiersState::CONTROL, ~BindingMode::VI; Action::Esc("\u{0017}".into());
+        Key::Named(Backspace), ModifiersState::CONTROL, ~BindingMode::VI, ~BindingMode::INPUT_BAR; Action::Esc("\u{0017}".into());
         Key::Named(Space), prefix; Action::ToggleViMode;
         "p", prefix; Action::OpenCommandPalette;
 

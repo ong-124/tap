@@ -90,6 +90,7 @@ fn draw_hint_tooltip(
     text: &str,
     window_size: (f32, f32),
     scale_factor: f32,
+    bottom_inset: f32,
 ) {
     let logical_width = window_size.0 / scale_factor;
     let logical_height = window_size.1 / scale_factor;
@@ -110,7 +111,8 @@ fn draw_hint_tooltip(
     let height = TOOLTIP_FONT_SIZE + TOOLTIP_PADDING_Y * 2.0;
     let width = text_width + TOOLTIP_PADDING_X * 2.0;
     let x = TOOLTIP_MARGIN;
-    let y = (logical_height - height - TOOLTIP_MARGIN).max(0.0);
+    // Ride above the input bar when it owns the bottom band.
+    let y = (logical_height - height - TOOLTIP_MARGIN - bottom_inset).max(0.0);
 
     sugarloaf.rounded_rect(
         None,
@@ -802,6 +804,7 @@ impl Renderer {
                 &hint.text,
                 (window_size.width, window_size.height),
                 scale_factor,
+                self.input_bar.height(),
             );
         }
 
@@ -815,9 +818,16 @@ impl Renderer {
             (window_size.width, window_size.height, scale_factor),
         );
 
+        // The bar shares the window background; only its border ring
+        // is its own paint.
+        let input_bar_bg = self
+            .last_window_bg
+            .map(|c| [c.r as f32, c.g as f32, c.b as f32, c.a as f32])
+            .unwrap_or(self.named_colors.background.0);
         self.input_bar.render(
             sugarloaf,
             (window_size.width, window_size.height, scale_factor),
+            input_bar_bg,
         );
 
         // Render scrollbars for each panel
