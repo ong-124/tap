@@ -103,6 +103,13 @@ pub struct Screen<'screen> {
     last_close_press: Option<(std::time::Instant, f32)>,
     pub grids: rustc_hash::FxHashMap<usize, rio_backend::sugarloaf::grid::GridRenderer>,
     pub grid_rasterizer: rio_grid::GridGlyphRasterizer,
+    /// Submissions still awaiting their OSC 133 `D` outcome, one
+    /// bounded queue per pane route: `(submit ts, line)`. Drained by
+    /// [`Screen::note_command_finished`] via
+    /// `input_history::exit_target`; shells without integration never
+    /// emit `D`, so the cap keeps their queues flat.
+    exit_pending:
+        std::collections::HashMap<usize, std::collections::VecDeque<(u64, String)>>,
 }
 
 pub struct ChromePress {
@@ -372,6 +379,7 @@ impl Screen<'_> {
             last_close_press: None,
             grids: rustc_hash::FxHashMap::default(),
             grid_rasterizer: rio_grid::GridGlyphRasterizer::new(),
+            exit_pending: std::collections::HashMap::new(),
         })
     }
 
@@ -1255,27 +1263,20 @@ impl Screen<'_> {
     /// completion at that host.
     fn input_bar_tab_complete(&mut self) {
         #[cfg(not(target_os = "windows"))]
-        let (cwd, ssh_session_host) = {
+        let ssh_session_host = {
             let current = self.context_manager.current();
-            let cmdline = teletypewriter::foreground_process_cmdline(
+            teletypewriter::foreground_process_cmdline(
                 *current.main_fd,
                 current.shell_pid,
             )
-            .ok();
-            let host = cmdline
-                .and_then(|argv| crate::completion::ssh_route(&argv))
-                .map(|route| route.dest);
-            (
-                teletypewriter::foreground_process_path(
-                    *current.main_fd,
-                    current.shell_pid,
-                )
-                .ok(),
-                host,
-            )
+            .ok()
+            .and_then(|argv| crate::completion::ssh_route(&argv))
+            .map(|route| route.dest)
         };
         #[cfg(target_os = "windows")]
-        let (cwd, ssh_session_host) = (None, None);
+        let ssh_session_host = None;
+
+        let cwd = self.focused_pane_cwd();
 
         // Refresh the focus snapshot while the pane's directory is
         // already being probed (the ghost ranks same-cwd history first).
@@ -1288,20 +1289,36 @@ impl Screen<'_> {
         self.renderer.input_bar.tab_complete(&sources);
     }
 
+    /// The focused pane's working directory: the shell-reported OSC 7
+    /// value first (the injected integration refreshes it on every
+    /// prompt AND every directory change, so it is prompt-fresh and
+    /// needs no syscalls), the foreground-process probe as the fallback
+    /// for shells without integration (bash, remote sessions). `None`
+    /// when neither source is available.
+    fn focused_pane_cwd(&self) -> Option<std::path::PathBuf> {
+        let current = self.context_manager.current();
+        if let Some(dir) = current.terminal.lock().current_directory.clone() {
+            return Some(dir);
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            teletypewriter::foreground_process_path(*current.main_fd, current.shell_pid)
+                .ok()
+        }
+        #[cfg(target_os = "windows")]
+        {
+            None
+        }
+    }
+
     /// Hand the composed line to the focused pane's PTY as if it had
     /// been typed: the full line plus a carriage return. When the bar
     /// records history, the line lands in the persistent store — after
     /// the close check, so a pane that just exited never records an
-    /// unsent line.
+    /// unsent line — and is queued for the OSC 133 `D` exit backfill.
     fn submit_input_bar_line(&mut self) {
-        #[cfg(not(target_os = "windows"))]
-        let cwd = {
-            let current = self.context_manager.current();
-            teletypewriter::foreground_process_path(*current.main_fd, current.shell_pid)
-                .unwrap_or_default()
-        };
-        #[cfg(target_os = "windows")]
-        let cwd = std::string::String::new();
+        let cwd = self.focused_pane_cwd().unwrap_or_default();
+        let route_id = self.context_manager.current_route();
 
         // Masked lines are secrets: `take_submitted_line` already kept
         // them out of the in-memory history; the explicit flag also
@@ -1316,6 +1333,7 @@ impl Screen<'_> {
             return;
         }
         if should_record && self.renderer.input_bar.records_history_line(&line) {
+            let ts = crate::input_history::now_ts();
             // Stamp the run directory on the newest entry so the ghost
             // suggestion can rank same-cwd history first, and refresh
             // the focus snapshot: a `cd` lands here before the next
@@ -1329,10 +1347,16 @@ impl Screen<'_> {
             crate::input_history::append(
                 &crate::input_history::store_path(),
                 &crate::input_history::Entry {
-                    ts: crate::input_history::now_ts(),
+                    ts,
                     cwd: cwd.to_string_lossy().into_owned(),
                     line: line.clone(),
+                    exit: None,
                 },
+            );
+            crate::input_history::push_exit_candidate(
+                self.exit_pending.entry(route_id).or_default(),
+                ts,
+                &line,
             );
         }
 
@@ -1342,6 +1366,37 @@ impl Screen<'_> {
         let mut bytes = line.into_bytes();
         bytes.push(b'\r');
         self.ctx_mut().current_mut().messenger.send_write(bytes);
+    }
+
+    /// One pane's command finished (OSC 133 `D`): drain the pane's
+    /// queued submissions and splice the exit status onto the matching
+    /// history row. Runs before the notification-only paths, so
+    /// recording never depends on `notify-on-command-finish`. A `D`
+    /// without a status still drains (the queue must not stall on
+    /// commands whose exit is unknowable).
+    pub fn note_command_finished(
+        &mut self,
+        route_id: usize,
+        exit_status: Option<i32>,
+        duration: std::time::Duration,
+    ) {
+        let Some(queue) = self.exit_pending.get_mut(&route_id) else {
+            return;
+        };
+        let started_at =
+            crate::input_history::now_ts().saturating_sub(duration.as_secs());
+        let Some((ts, line)) = crate::input_history::exit_target(queue, started_at)
+        else {
+            return;
+        };
+        if let Some(exit) = exit_status {
+            crate::input_history::backfill_exit(
+                &crate::input_history::store_path(),
+                ts,
+                &line,
+                exit,
+            );
+        }
     }
 
     /// Check whether we should try to build escape sequence for the [`KeyEvent`].

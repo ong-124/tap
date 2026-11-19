@@ -76,12 +76,12 @@
   - P3 建议逻辑：ghost 同 cwd 优先两桶扫描（load_entries 回传 cwd、set_history_entries/set_last_history_cwd/set_focus_cwd 三点供数，焦点 cwd 在提交与 Tab 时快照，↑/↓ 浏览不变）、strip_prefix 渐进裁剪免重查（suggestion_line 存整行，打字/退格裁尾，偏移才重扫；焦点 cwd 变更绕过裁剪直接重排序）
   - P4：Ctrl+→ 逐词接受 ghost（accept_suggestion_word，剩余续作 ghost，无 ghost 时透传终端 word-right，与既有绑定无冲突）；Tab 决策四态纯函数化未做（改动未自然触碰，不强求）
   - 验证：rio-backend 229 / rioterm 365 测试通过（新增 17 个：转义 5、防缩短 1、历史去重/忽略空格 3、ghost cwd/裁剪/逐词 4、symlink 1 等），clippy/fmt 干净；librio 存在 3 个与本任务无关的既有 flaky（backwards_drag/osc8_links/iterm2_image，净树同样失败）；待用户手测清单见任务文档
-- [ ] 【待开始】OSC 133 信号接入输入栏（[详情](task/20261119-2024_OSC133信号接入输入栏.md)）
+- [x] 【已完成】OSC 133 信号接入输入栏（[详情](task/20261119-2024_OSC133信号接入输入栏.md)）
   - 事实修正：upstream rio 已带全套——spawn 自动注入（zsh ZDOTDIR/fish XDG_DATA_DIRS/PowerShell 重写，bash/cmd 不注入，`shell_integration/mod.rs`）、rio-vt 解析 OSC 133 A/N/C/D+exit 与 OSC 7 cwd、pane 级 current_directory 存储、`CommandFinished{exit_status,duration,route_id}` 事件已到 application 层（现仅驱动 notify-on-command-finish）
-  - 接线一（exit 落历史）：提交侧记 pending(route_id,ts,line)，CommandFinished 按 route 匹配回填 TSV 第四列 exit（读侧兼容旧三列，低频全文件重写与 2003 任务共用机制，无标记 shell 永远三列=现状）
-  - 接线二（cwd 真值）：Tab 补全 Sources 与历史 Entry 的 cwd 改为 OSC 7 `current_directory` 优先、`foreground_process_path` 探测降兜底（ssh 远端不更新 OSC 7，须探测兜底对齐 1801 逻辑）；服务 2003 任务 P3「ghost 同 cwd 优先」
+  - 接线一（exit 落历史）：Entry 增 exit 列（TSV 可选第四列，尾部整数语义，旧三列兼容）；提交侧按 route 入队（`MAX_EXIT_PENDING=8`），`note_command_finished` 以 `now-duration` 为命令起始时间做时间窗排水（事件链无 CommandStarted，C 确认制不可行；首版 +1 宽限被测试抓出误吸运行中提交的下一行，已删）回填 `(ts,line)` 最新未回填行，其余字节逐字保留；D 无状态也排水防队头滞留；application 侧先于 notify 配置早退调用
+  - 接线二（cwd 真值）：`focused_pane_cwd()` = OSC 7 `current_directory` 优先（提示符与 chpwd 双时机刷新）→ `foreground_process_path` 探测兜底 → None；Tab 补全与提交落盘换用，submit 的 Windows cfg 分支消并；ssh 远端 OSC 7 不更新由探测兜底覆盖
   - 明确不动：锁定判定维持修复轮次八（仅 ALT_SCREEN，标记只增强不门控）；bash/cmd 注入、远端标记、exit 的 UI 展示不做
-  - 验证：cargo test + 手测（zsh 提交后 input-history 尾行带 exit 列；bash 三列不变；ssh 补全 cwd 仍正确）
+  - 验证：rio-backend 229 / rio-vt 708 / rioterm 373（+8）通过，clippy/fmt 干净，待用户手测（zsh 提交后 input-history 尾行带 exit 列；bash 三列不变；ssh 补全 cwd 仍正确）
 - [ ] 【待开始】输入广播（多分屏同步提交）（[详情](task/20261119-2024_输入广播多分屏同步提交.md)）
   - 形态（输入栏架构下天然收敛）：广播开关 toggle，开启期间提交 fan-out `line+\r` 到 scope 内全部 pane；逐键/控制键不广播（规避 tmux 广播灌控制键进 vim 的破坏性）
   - v1 scope：当前标签全部分屏；安全边界：仅发非 ALT_SCREEN 锁定 pane，跳过时提示跳过数；最小可见性：开启时提示符前加标识（`>>` 或变色）；广播提交只记一条历史（焦点 pane cwd）

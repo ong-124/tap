@@ -1683,6 +1683,7 @@ mod tests {
             ts,
             cwd: cwd.to_string(),
             line: line.to_string(),
+            exit: None,
         };
         let mut bar = InputBar::new(true);
         bar.set_history_entries(vec![

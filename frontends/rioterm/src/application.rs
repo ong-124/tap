@@ -225,6 +225,15 @@ impl Application<'_> {
         exit_status: Option<i32>,
         duration: std::time::Duration,
     ) {
+        // History first: the exit status must reach the input-bar
+        // store no matter how the notification config below filters.
+        if let Some(route) = self.router.routes.get_mut(&window_id) {
+            route
+                .window
+                .screen
+                .note_command_finished(route_id, exit_status, duration);
+        }
+
         use rio_backend::config::command_finished::NotifyWhen;
 
         let config = self.config.notify_on_command_finish;
