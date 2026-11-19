@@ -83,7 +83,8 @@
   - 明确不动：锁定判定维持修复轮次八（仅 ALT_SCREEN，标记只增强不门控）；bash/cmd 注入、远端标记、exit 的 UI 展示不做
   - 验证：rio-backend 229 / rio-vt 708 / rioterm 373（+8）通过，clippy/fmt 干净，待用户手测（zsh 提交后 input-history 尾行带 exit 列；bash 三列不变；ssh 补全 cwd 仍正确）
 - [x] 【已完成】输入广播（多分屏同步提交）（[详情](task/20261119-2024_输入广播多分屏同步提交.md)）
-  - 形态（输入栏架构下天然收敛）：`<leader>`+S toggle（leader+B 被向后搜索占用；自绑名 togglebroadcast，三平台 use_splits 表），开启时输入栏提示符变 `>> ❯`，提交 fan-out `line+\r` 到当前标签全部可用 pane；逐键/控制键不广播（规避 tmux 广播灌控制键进 vim 的破坏性）；历史仍记一条（焦点 pane cwd）
+  - 形态（输入栏架构下天然收敛）：`<leader>`+S toggle（leader+B 被向后搜索占用；自绑名 togglebroadcast，三平台 use_splits 表），开启时输入栏提示符变 `>> ❯`，提交 fan-out `line+\r` 到当前标签全部可用 pane；逐键不广播（规避 tmux 广播灌控制键进 vim 的破坏性）；历史仍记一条（焦点 pane cwd）
   - 安全边界：仅发非 ALT_SCREEN 锁定 pane，跳过时输入栏上方 2s 瞬时提示跳过数（复用候选行位置，候选行显示时让位）；`broadcast_recipients` 纯函数 + 3 单测（关=仅焦点/开跳锁定/全锁定零发送）；热重载 mem::take 保留 bar 实例，广播状态跨重载存活
-  - 验证：rio-backend 229 / rioterm 376（+3）通过，clippy 0 告警，fmt 干净；快捷键清单已同步；待用户手测（三 split 一次提交三处执行、vim pane 跳过提示、关闭恢复单发、↑ 历史只多一条）
+  - 修复轮次一（20261119-2205）：广播开启时 Ctrl+C 随广播扇出（`broadcast_to_others`，焦点 pane 走原直通不双发，锁定 pane 静默跳过）——打断广播出去的长命令是广播命令生命周期的一部分；Ctrl+D/Z 等仍单发（EOF 关 pane 有破坏性）；pane 收集重构为 broadcast_panes() 共享 helper
+  - 验证：rio-backend 229 / rioterm 376 通过，clippy 0 告警，fmt 干净；快捷键清单已同步；待用户复测（4 pane 广播 ping 后一次 Ctrl+C 全停）
   - 后续候选：全部标签/勾选集合 scope、与 OSC 133 AtPrompt 真值联动（仅发提示符态 pane）

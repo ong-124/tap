@@ -1245,8 +1245,15 @@ impl Screen<'_> {
                 }
                 // Ctrl+C interrupts what the shell is showing; the
                 // half-composed line no longer matches the prompt.
+                // While a broadcast is armed the interrupt fans out
+                // too: a long command started by a broadcast must be
+                // stoppable in one press (the focused pane still gets
+                // its byte through the normal passthrough below).
                 "c" => {
                     self.renderer.input_bar.clear();
+                    if self.broadcast {
+                        self.broadcast_to_others(&[b'\x03']);
+                    }
                     return false;
                 }
                 _ => return false,
@@ -1402,21 +1409,11 @@ impl Screen<'_> {
         // destructive and passthrough keys are never broadcast anyway.
         // Off, the focused pane alone receives it as before.
         if self.broadcast {
-            let panes: Vec<(usize, bool)> = self
-                .context_manager
-                .current_grid()
-                .contexts()
-                .values()
-                .map(|item| {
-                    let context = item.context();
-                    (
-                        context.route_id,
-                        context.terminal.lock().mode().contains(Mode::ALT_SCREEN),
-                    )
-                })
-                .collect();
-            let (recipients, skipped) =
-                broadcast_recipients(&panes, true, self.context_manager.current_route());
+            let (recipients, skipped) = broadcast_recipients(
+                &self.broadcast_panes(),
+                true,
+                self.context_manager.current_route(),
+            );
             for route_id in recipients {
                 if let Some(item) = self
                     .context_manager
@@ -1433,6 +1430,46 @@ impl Screen<'_> {
             }
         } else {
             self.ctx_mut().current_mut().messenger.send_write(bytes);
+        }
+    }
+
+    /// The current tab's panes as `(route_id, alt_screen_locked)`
+    /// pairs — the broadcast recipient pool.
+    fn broadcast_panes(&self) -> Vec<(usize, bool)> {
+        self.context_manager
+            .current_grid()
+            .contexts()
+            .values()
+            .map(|item| {
+                let context = item.context();
+                (
+                    context.route_id,
+                    context.terminal.lock().mode().contains(Mode::ALT_SCREEN),
+                )
+            })
+            .collect()
+    }
+
+    /// Send `bytes` to every available pane of the current tab except
+    /// the focused one, whose copy arrives through the normal
+    /// passthrough path. Used by the Ctrl+C fan-out; locked panes are
+    /// silently skipped (a SIGINT into vim would be destructive and is
+    /// not needed to stop a broadcasted command).
+    fn broadcast_to_others(&mut self, bytes: &[u8]) {
+        let focused = self.context_manager.current_route();
+        let (recipients, _) =
+            broadcast_recipients(&self.broadcast_panes(), true, focused);
+        for route_id in recipients {
+            if route_id == focused {
+                continue;
+            }
+            if let Some(item) = self
+                .context_manager
+                .current_grid_mut()
+                .get_by_route_id(route_id)
+            {
+                item.context().messenger.send_write(bytes.to_vec());
+            }
         }
     }
 
