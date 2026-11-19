@@ -23,6 +23,10 @@ pub type KeyBindings = Vec<KeyBinding>;
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Bindings {
+    /// Defaults to empty: a `[bindings]` section that only tunes the
+    /// `prefix` (the common case) must not fail with "missing field
+    /// keys".
+    #[serde(default = "KeyBindings::default")]
     pub keys: KeyBindings,
     /// Modifier prefix shared by all prefixed built-in key bindings
     /// (copy, paste, tabs, splits, ...). Accepts a single modifier
@@ -52,6 +56,26 @@ mod tests {
     struct Root {
         #[serde(default = "Bindings::default")]
         bindings: Bindings,
+    }
+
+    #[test]
+    fn test_prefix_only_section_keeps_keys_empty() {
+        let content = r#"
+            [bindings]
+            prefix = 'alt'
+        "#;
+
+        let decoded = toml::from_str::<Root>(content).unwrap();
+        assert!(decoded.bindings.keys.is_empty());
+        assert_eq!(decoded.bindings.prefix, "alt");
+
+        // An empty section takes both defaults too.
+        let decoded = toml::from_str::<Root>("[bindings]").unwrap();
+        assert!(decoded.bindings.keys.is_empty());
+        assert_eq!(
+            decoded.bindings.prefix,
+            crate::config::defaults::default_binding_prefix()
+        );
     }
 
     #[test]
