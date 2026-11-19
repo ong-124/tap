@@ -796,54 +796,6 @@ impl Renderer {
         let window_size = sugarloaf.window_size();
         let scale_factor = sugarloaf.scale_factor();
 
-        // Dim overlay for unfocused splits. Drawn after the split content is
-        // built so it composites on top. The tint comes from
-        // `unfocused_split_fill` (falling back to the terminal background)
-        // and its strength is `1.0 - unfocused_split_opacity`. Skipped
-        // entirely when the feature is disabled.
-        if self.unfocused_split_opacity < 1.0 {
-            let tint = self
-                .unfocused_split_fill
-                .unwrap_or(self.dynamic_background.0);
-            let dim_color = [
-                tint[0],
-                tint[1],
-                tint[2],
-                1.0 - self.unfocused_split_opacity,
-            ];
-            // Within-grid comparison: taffy keys are only meaningful
-            // inside a single tab's tree.
-            let active_key = grid.current;
-            for (key, grid_context) in grid.contexts_mut().iter() {
-                if &active_key == key {
-                    continue;
-                }
-                // Match the grid renderer's actual paint region —
-                // `.round()`ed integer-pixel origin +
-                // `cols * round(cell_w)` × `rows * round(cell_h)`
-                // content size (same math as `GridUniforms.grid_padding`
-                // / `cell_size` in `screen/mod.rs:~3717`). Using raw
-                // `layout_rect` leaves a sub-pixel un-dimmed fringe at
-                // the right/bottom edges of inactive splits because
-                // taffy allocates fractional sizes while the grid
-                // snaps to whole cells.
-                let dim = grid_context.val.dimension;
-                let cell_w = dim.cell.cell_width as f32;
-                let cell_h = dim.cell.cell_height as f32;
-                let cols = dim.columns.max(1) as f32;
-                let rows = dim.lines.max(1) as f32;
-                let panel_left =
-                    (grid_context.layout_rect[0] + grid_scaled_margin.left).round();
-                let panel_top =
-                    (grid_context.layout_rect[1] + grid_scaled_margin.top).round();
-                let x = panel_left / scale_factor;
-                let y = panel_top / scale_factor;
-                let w = (cols * cell_w) / scale_factor;
-                let h = (rows * cell_h) / scale_factor;
-                sugarloaf.rect(None, x, y, w, h, dim_color, 0.0, 3);
-            }
-        }
-
         if let Some(island) = &mut self.island {
             let island_bg = self
                 .last_window_bg
@@ -1003,6 +955,21 @@ impl Renderer {
         } else {
             false
         }
+    }
+
+    /// Background dim for unfocused splits: `(factor, tint)` with
+    /// factor = `1.0 - unfocused_split_opacity` and the tint from
+    /// `unfocused_split_fill` (black when unset — the pane background
+    /// darkens, the characters stay at full contrast). The Screen
+    /// bakes it into the per-cell backgrounds during row emission, so
+    /// unlike the old overlay rect it never covers text and always
+    /// spans the exact cell grid. `None` when dimming is disabled.
+    pub fn unfocused_split_dim(&self) -> Option<(f32, [f32; 4])> {
+        if self.unfocused_split_opacity >= 1.0 {
+            return None;
+        }
+        let tint = self.unfocused_split_fill.unwrap_or([0.0, 0.0, 0.0, 1.0]);
+        Some((1.0 - self.unfocused_split_opacity, tint))
     }
 
     /// Scan visible rows for kitty Unicode-placeholder cells (U+10EEEE) and

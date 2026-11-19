@@ -4613,6 +4613,9 @@ impl Screen<'_> {
 
             let rasterizer = &mut self.grid_rasterizer;
             let renderer_ref = &self.renderer;
+            // Unfocused-split dim baked into the cell backgrounds during
+            // row emission — replaces the old overlay rect.
+            let unfocused_dim = renderer_ref.unfocused_split_dim();
             for (route_id, grid) in self.grids.iter_mut() {
                 let Some(p) = panels.iter_mut().find(|p| p.route_id == *route_id) else {
                     continue;
@@ -4678,6 +4681,36 @@ impl Screen<'_> {
                             })
                             .collect()
                     });
+
+                /// Blend a premultiplied cell background toward `tint`
+                /// by `factor`. Default-background cells (alpha 0, the
+                /// window bg shows through) become a translucent tint
+                /// fill so the whole pane darkens, not just cells with
+                /// an explicit color.
+                fn dim_cell_bg(rgba: [u8; 4], factor: f32, tint: [f32; 4]) -> [u8; 4] {
+                    let f = factor.clamp(0.0, 1.0);
+                    let [r, g, b, a] = rgba.map(|c| c as f32);
+                    if a == 0.0 {
+                        let alpha = (f * 255.0).round() as u8;
+                        [
+                            (tint[0] * alpha as f32).round() as u8,
+                            (tint[1] * alpha as f32).round() as u8,
+                            (tint[2] * alpha as f32).round() as u8,
+                            alpha,
+                        ]
+                    } else {
+                        let keep = 1.0 - f;
+                        let blend = |c: f32, t: f32| {
+                            (c * keep + t * 255.0 * f).round().clamp(0.0, 255.0) as u8
+                        };
+                        [
+                            blend(r, tint[0]),
+                            blend(g, tint[1]),
+                            blend(b, tint[2]),
+                            (a * keep + 255.0 * f).round().clamp(0.0, 255.0) as u8,
+                        ]
+                    }
+                }
 
                 // Small helper: rebuild one row into the grid's
                 // buffers. Closure-style to avoid duplicating the
@@ -4757,6 +4790,17 @@ impl Screen<'_> {
                             preedit_row.as_ref(),
                             &mut bg_scratch,
                         );
+                        // Inactive splits darken through their cell
+                        // backgrounds (characters keep full contrast);
+                        // focus switches force a full rebuild, so the
+                        // baked dim always matches the active pane.
+                        if let Some((factor, tint)) = unfocused_dim {
+                            if !p.is_active {
+                                for cell in bg_scratch.iter_mut() {
+                                    cell.rgba = dim_cell_bg(cell.rgba, factor, tint);
+                                }
+                            }
+                        }
                         let cursor_col_for_row = if p.cursor_visible
                             && (y as u16) == p.cursor_row
                             && p.cursor_shape != rio_backend::ansi::CursorShape::Hidden
