@@ -113,6 +113,16 @@ pub struct InputBar {
     /// most recent history entry matching the buffer as a prefix,
     /// rendered dim after the caret and accepted with → / End.
     suggestion: Option<String>,
+    /// The full history entry the ghost came from, so an edit that
+    /// still extends toward it just trims the tail instead of
+    /// rescanning (Warp editor/view/mod.rs:7725-7774).
+    suggestion_line: Option<String>,
+    /// Per-entry cwd parallel to `history` (empty = unknown), used to
+    /// rank same-directory history first for the ghost suggestion.
+    history_cwds: Vec<String>,
+    /// cwd of the focused pane, snapshotted by the screen layer on
+    /// submit / Tab; `None` until then (cwd-agnostic ranking).
+    focus_cwd: Option<String>,
     /// Live Tab-completion cycle state; kept only while the word under
     /// the cursor is still the one this state last produced.
     completion: Option<CompletionState>,
@@ -181,6 +191,9 @@ impl Default for InputBar {
             masked: false,
             preedit: None,
             suggestion: None,
+            suggestion_line: None,
+            history_cwds: Vec::new(),
+            focus_cwd: None,
             completion: None,
             dynamic: true,
             aliases: std::collections::HashMap::new(),
@@ -297,6 +310,7 @@ impl InputBar {
             self.locked = locked;
             if locked {
                 self.suggestion = None;
+                self.suggestion_line = None;
                 self.completion = None;
                 // An in-flight answer belongs to a prompt that is gone;
                 // drop it (the worker finishes harmlessly on its own).
@@ -321,6 +335,7 @@ impl InputBar {
         if masked && !self.masked {
             self.masked = true;
             self.suggestion = None;
+            self.suggestion_line = None;
             self.completion = None;
             self.caret_blink_start = Instant::now();
         }
@@ -348,15 +363,52 @@ impl InputBar {
     }
 
     /// Replace the browsable history (startup load of the persistent
-    /// store). Any in-flight browse resets to the live line.
+    /// store). Any in-flight browse resets to the live line. Entries
+    /// arrive without cwd metadata, so the ghost ranks cwd-agnostically.
     pub fn set_history(&mut self, history: Vec<String>) {
+        self.history_cwds.clear();
+        self.reset_history(history);
+    }
+
+    /// Same, with the per-entry cwd the persistent store recorded —
+    /// the ghost suggestion prefers entries from the focused pane's
+    /// directory (Warp next_command_model.rs:839-864).
+    pub fn set_history_entries(&mut self, entries: Vec<crate::input_history::Entry>) {
+        self.history_cwds = entries.iter().map(|e| e.cwd.clone()).collect();
+        self.reset_history(entries.into_iter().map(|e| e.line).collect());
+    }
+
+    fn reset_history(&mut self, history: Vec<String>) {
         self.history = history;
         self.history_pos = None;
         self.draft.clear();
         self.draft_masked = false;
         self.masked = false;
+        self.suggestion_line = None;
         self.invalidate_completion();
         self.refresh_suggestion();
+    }
+
+    /// Snapshot the focused pane's cwd (screen layer refreshes it on
+    /// submit and Tab, both points where the pane's directory is
+    /// already being probed).
+    pub fn set_focus_cwd(&mut self, cwd: Option<String>) {
+        if self.focus_cwd != cwd {
+            self.focus_cwd = cwd;
+            // Ranking context changed: drop the trim shortcut so the
+            // scan re-ranks against the new directory.
+            self.suggestion_line = None;
+            self.refresh_suggestion();
+        }
+    }
+
+    /// Stamp the cwd a just-submitted line ran in onto the newest
+    /// history entry (the push itself doesn't know it). Called by the
+    /// screen layer right after `take_submitted_line`.
+    pub fn set_last_history_cwd(&mut self, cwd: &str) {
+        if let Some(last) = self.history_cwds.last_mut() {
+            *last = cwd.to_string();
+        }
     }
 
     /// `[input-bar] record-history` / `suggestions` / `dynamic-completion`
@@ -396,32 +448,87 @@ impl InputBar {
         self.history.last().map(String::as_str) == Some(line)
     }
 
+    /// Whether a submitted line belongs in history: non-blank and
+    /// without a leading space. Shared gate for the in-memory list and
+    /// (via the screen layer) the persistent store.
+    #[inline]
+    pub fn records_history_line(&self, line: &str) -> bool {
+        !line.is_empty() && !line.starts_with(' ') && !line.trim().is_empty()
+    }
+
     fn invalidate_completion(&mut self) {
         self.completion = None;
     }
 
-    /// Recompute the ghost suggestion from the tail of the history:
-    /// most recent entry matching the buffer as a prefix wins. Only
-    /// meaningful at end-of-line, outside composition and history
-    /// browsing — otherwise `None`.
+    /// Recompute the ghost suggestion. Only meaningful at end-of-line,
+    /// outside composition and history browsing — otherwise `None`.
+    ///
+    /// Two-step: an edit that still points at the current suggestion's
+    /// line just trims the tail (Warp editor/view/mod.rs:7725-7774 —
+    /// no rescan, so the ghost never jumps to a different entry while
+    /// typing toward it); otherwise a fresh scan prefers entries whose
+    /// recorded cwd matches the focused pane's, then everything else,
+    /// most recent first in each bucket.
     fn refresh_suggestion(&mut self) {
-        let suffix = if self.suggestions
+        let eligible = self.suggestions
             && !self.masked
             && self.preedit.is_none()
             && self.history_pos.is_none()
             && self.cursor == self.char_count()
-            && !self.buffer.is_empty()
-        {
-            let buffer = self.buffer.clone();
-            self.history
-                .iter()
-                .rev()
-                .find(|entry| entry.starts_with(&buffer) && entry.as_str() != buffer)
-                .map(|entry| entry[buffer.len()..].to_string())
-        } else {
-            None
+            && !self.buffer.is_empty();
+        if !eligible {
+            self.suggestion = None;
+            self.suggestion_line = None;
+            return;
+        }
+
+        // Progressive trim: the buffer is still a strict prefix of the
+        // line behind the current ghost — covers appends (tail shrinks)
+        // and backspace (tail grows back).
+        if let Some(line) = self.suggestion_line.clone() {
+            if line.starts_with(self.buffer.as_str()) && line != self.buffer {
+                self.suggestion = Some(line[self.buffer.len()..].to_string());
+                return;
+            }
+        }
+
+        // Fresh scan, newest → oldest, same-cwd bucket first. Entries
+        // without cwd metadata (plain `set_history`, in-session pushes
+        // before the screen stamps them) never claim the priority.
+        let buffer = self.buffer.clone();
+        let same_cwd = |i: usize| {
+            self.focus_cwd
+                .as_deref()
+                .filter(|focus| !focus.is_empty())
+                .zip(self.history_cwds.get(i).map(String::as_str))
+                .is_some_and(|(focus, cwd)| focus == cwd && !cwd.is_empty())
         };
-        self.suggestion = suffix;
+        let mut primary: Option<usize> = None;
+        let mut fallback: Option<usize> = None;
+        for i in (0..self.history.len()).rev() {
+            let entry = &self.history[i];
+            if entry == &buffer || !entry.starts_with(buffer.as_str()) {
+                continue;
+            }
+            if primary.is_none() && same_cwd(i) {
+                primary = Some(i);
+                break;
+            }
+            if fallback.is_none() {
+                fallback = Some(i);
+            }
+        }
+        match primary.or(fallback) {
+            Some(i) => {
+                let entry = self.history[i].clone();
+                self.suggestion = Some(entry[self.buffer.len()..].to_string());
+                self.suggestion_line = Some(entry);
+            }
+            None => {
+                self.suggestion = None;
+                self.suggestion_line = None;
+            }
+        }
     }
 
     /// → / End at end-of-line: append the ghost suffix. Returns
@@ -437,6 +544,46 @@ impl InputBar {
         self.view_start = 0;
         self.invalidate_completion();
         self.refresh_suggestion();
+        true
+    }
+
+    /// Ctrl+→ at end-of-line: accept the ghost's next word, the
+    /// remainder stays as the ghost (Warp mod.rs:6006-6076). Returns
+    /// whether a suggestion was consumed; the caller falls back to the
+    /// plain word-right passthrough otherwise.
+    pub fn accept_suggestion_word(&mut self) -> bool {
+        let Some(suggestion) = self.suggestion.clone() else {
+            return false;
+        };
+        // First word end of the ghost: skip the leading whitespace run,
+        // then take the word itself (whitespace-delimited, matching the
+        // rest of the bar's word logic).
+        let chars: Vec<char> = suggestion.chars().collect();
+        let mut end = 0;
+        while end < chars.len() && chars[end].is_whitespace() {
+            end += 1;
+        }
+        while end < chars.len() && !chars[end].is_whitespace() {
+            end += 1;
+        }
+        if end == 0 {
+            return false;
+        }
+        self.fork_from_history();
+        let accepted: String = chars[..end].iter().collect();
+        self.buffer.push_str(&accepted);
+        self.cursor = self.char_count();
+        self.view_start = 0;
+        self.invalidate_completion();
+        let remaining: String = chars[end..].iter().collect();
+        if remaining.is_empty() {
+            self.suggestion = None;
+            self.suggestion_line = None;
+        } else {
+            // The buffer is still a strict prefix of the suggestion's
+            // line — keep the ghost, no rescan.
+            self.suggestion = Some(remaining);
+        }
         true
     }
 
@@ -460,7 +607,9 @@ impl InputBar {
 
         // Cycle: same word start and same word text as the live state.
         // `index` is the candidate currently sitting in the buffer, so
-        // the highlight always matches what was applied.
+        // the highlight always matches what was applied. `current`
+        // stores the *unquoted* word — the buffer holds the escaped
+        // insert, the tokenizer hands back the unescaped text.
         if let Some(state) = self.completion.take() {
             if state.word_start == word_start
                 && state.current == word
@@ -472,10 +621,11 @@ impl InputBar {
                     (state.index + 1) % state.candidates.len()
                 };
                 let insert = state.candidates[next].insert.clone();
+                let current = crate::completion::unescape_word(&insert);
                 self.apply_word(word_start, &insert);
                 self.completion = Some(CompletionState {
                     index: next,
-                    current: insert,
+                    current,
                     ..state
                 });
                 self.refresh_suggestion();
@@ -643,6 +793,11 @@ impl InputBar {
     /// Shared candidate application: single candidate inserts (space
     /// unless dir/no-space), several share the common prefix and open
     /// the cycle menu. The dynamic poll path reuses this.
+    ///
+    /// Before anything is applied, the candidate must be a superset of
+    /// the word being completed (Warp input.rs:13736-13741): a late or
+    /// cached dynamic answer that does not extend the typed word is
+    /// dropped rather than shortening the user's input.
     fn apply_candidates_at(
         &mut self,
         candidates: Vec<crate::completion::Candidate>,
@@ -653,6 +808,11 @@ impl InputBar {
         match candidates.len() {
             0 => {}
             1 => {
+                let candidate_word =
+                    crate::completion::unescape_word(&candidates[0].insert);
+                if !candidate_word.starts_with(word) {
+                    return;
+                }
                 let mut insert = candidates[0].insert.clone();
                 if !candidates[0].is_dir && !no_space {
                     insert.push(' ');
@@ -664,7 +824,15 @@ impl InputBar {
                 let inserts: Vec<&str> =
                     candidates.iter().map(|c| c.insert.as_str()).collect();
                 let prefix = crate::completion::common_prefix(&inserts);
-                if prefix.chars().count() > word.chars().count() {
+                let prefix_word = crate::completion::unescape_word(&prefix);
+                // Guard: candidates must extend the typed word. A stale
+                // answer that doesn't is dropped whole — inserting its
+                // LCP would shorten the input, and a cycle menu over it
+                // would do the same on the next Tab.
+                if !prefix_word.starts_with(word) {
+                    return;
+                }
+                if prefix_word.chars().count() > word.chars().count() {
                     self.apply_word(word_start, &prefix);
                 }
                 // When the LCP is a full candidate it already sits in
@@ -678,7 +846,9 @@ impl InputBar {
                 };
                 self.completion = Some(CompletionState {
                     word_start,
-                    current: prefix,
+                    // Unquoted form: the buffer holds the escaped
+                    // insert, the next Tab compares tokenized text.
+                    current: prefix_word,
                     candidates,
                     index,
                 });
@@ -898,16 +1068,24 @@ impl InputBar {
     }
 
     /// Hand the composed line to the caller, record it in history
-    /// (skipping empty, repeated and masked entries) and reset the
-    /// editor. Masked lines — passwords — never reach history, memory
-    /// or persistent alike.
+    /// (skipping empty, repeated, masked and space-prefixed entries)
+    /// and reset the editor. Masked lines — passwords — never reach
+    /// history, memory or persistent alike; lines with a leading space
+    /// or blank lines stay out too (Warp's ignorespace semantics,
+    /// shell/mod.rs:182-210 — type ` <cmd>` for an unrecorded run).
     pub fn take_submitted_line(&mut self) -> String {
         let line = self.buffer.clone();
         let secret = self.masked;
-        if !secret && !line.is_empty() && self.history.last() != Some(&line) {
+        if !secret
+            && self.records_history_line(&line)
+            && self.history.last() != Some(&line)
+        {
             self.history.push(line.clone());
+            // cwd unknown here; the screen layer stamps it right after.
+            self.history_cwds.push(String::new());
             if self.history.len() > MAX_HISTORY {
                 self.history.remove(0);
+                self.history_cwds.remove(0);
             }
         }
         self.buffer.clear();
@@ -1500,6 +1678,88 @@ mod tests {
     }
 
     #[test]
+    fn suggestion_prefers_the_focus_cwd_bucket() {
+        let entry = |ts: u64, cwd: &str, line: &str| crate::input_history::Entry {
+            ts,
+            cwd: cwd.to_string(),
+            line: line.to_string(),
+        };
+        let mut bar = InputBar::new(true);
+        bar.set_history_entries(vec![
+            entry(1, "/proj", "make build"),
+            entry(2, "/other", "make test"),
+        ]);
+
+        // No focus snapshot yet: most recent match wins.
+        bar.insert_text("make");
+        assert_eq!(bar.suggestion.as_deref(), Some(" test"));
+
+        // Focused on /proj: the older same-directory entry outranks the
+        // newer foreign one.
+        bar.set_focus_cwd(Some("/proj".to_string()));
+        assert_eq!(bar.suggestion.as_deref(), Some(" build"));
+
+        // Entries without cwd metadata never claim the priority.
+        bar.set_focus_cwd(None);
+        assert_eq!(bar.suggestion.as_deref(), Some(" test"));
+    }
+
+    #[test]
+    fn suggestion_trims_instead_of_rescanning() {
+        let mut bar = bar_with_history(&["cargo test", "cargo ten"]);
+        bar.insert_text("car");
+        assert_eq!(bar.suggestion.as_deref(), Some("go ten"));
+
+        // Typing toward the suggested line trims the ghost tail without
+        // a rescan — a rescan would jump to "cargo test" ("st"), the
+        // trim keeps "cargo ten" ("n").
+        bar.insert_text("go te");
+        assert_eq!(bar.suggestion.as_deref(), Some("n"));
+
+        // Backspacing grows the tail back.
+        bar.backspace();
+        assert_eq!(bar.suggestion.as_deref(), Some("en"));
+
+        // Diverging from the line falls back to a rescan.
+        bar.insert_text("x");
+        assert_eq!(bar.suggestion, None);
+    }
+
+    #[test]
+    fn ctrl_right_accepts_the_suggestion_word_by_word() {
+        let mut bar = bar_with_history(&["cargo build --release"]);
+        bar.insert_text("cargo");
+        assert_eq!(bar.suggestion.as_deref(), Some(" build --release"));
+
+        assert!(bar.accept_suggestion_word());
+        assert_eq!(bar.buffer, "cargo build");
+        assert_eq!(bar.suggestion.as_deref(), Some(" --release"));
+
+        assert!(bar.accept_suggestion_word());
+        assert_eq!(bar.buffer, "cargo build --release");
+        assert_eq!(bar.suggestion, None, "the ghost is exhausted");
+
+        // Without a ghost the key falls through to the caller.
+        assert!(!bar.accept_suggestion_word());
+    }
+
+    #[test]
+    fn submitted_lines_get_their_cwd_stamped() {
+        let mut bar = bar_with_history(&["ls"]);
+        bar.insert_text("make");
+        bar.take_submitted_line();
+        bar.set_last_history_cwd("/proj");
+
+        bar.set_focus_cwd(Some("/proj".to_string()));
+        bar.insert_text("ma");
+        assert_eq!(
+            bar.suggestion.as_deref(),
+            Some("ke"),
+            "the stamped entry ranks first in its own directory"
+        );
+    }
+
+    #[test]
     fn submit_reports_whether_history_took_the_line() {
         let mut bar = InputBar::new(true);
         bar.insert_text("dup");
@@ -1686,6 +1946,99 @@ mod tests {
         bar.insert_text("m");
         bar.tab_complete(&sources);
         assert_eq!(bar.buffer, "./src/main.rs ");
+    }
+
+    #[test]
+    fn tab_escapes_special_filenames() {
+        let dir = TempDirGuard::new("escaping");
+        std::fs::write(dir.path().join("my file.txt"), "").unwrap();
+        std::fs::create_dir(dir.path().join("new dir")).unwrap();
+        let sources = dir.sources(Some(dir.path().to_path_buf()));
+
+        let mut bar = InputBar::new(true);
+        // The user types the escape as they go: the tokenizer hands the
+        // completer the unescaped word `./my fi`.
+        bar.insert_text("./my\\ fi");
+        bar.tab_complete(&sources);
+        // The insert is shell-escaped: the produced command runs as-is.
+        assert_eq!(bar.buffer, "./my\\ file.txt ");
+
+        // Escaped directory candidates keep the trailing slash.
+        bar.clear();
+        bar.insert_text("./new");
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "./new\\ dir/");
+    }
+
+    #[test]
+    fn tab_cycles_escaped_candidates() {
+        let dir = TempDirGuard::new("escaping-cycle");
+        std::fs::write(dir.path().join("a file"), "").unwrap();
+        std::fs::write(dir.path().join("a file2"), "").unwrap();
+        let sources = dir.sources(Some(dir.path().to_path_buf()));
+
+        let mut bar = InputBar::new(true);
+        bar.insert_text("./a");
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "./a\\ file", "LCP of escaped inserts");
+        assert_eq!(bar.completion.as_ref().unwrap().index, 0);
+        // The cycle state compares unquoted words, so cycling works
+        // across the escaped buffer content.
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "./a\\ file2");
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "./a\\ file", "wraps around");
+    }
+
+    #[test]
+    fn stale_candidates_never_shorten_the_typed_word() {
+        let mut bar = InputBar::new(true);
+        bar.insert_text("kubectl get pod my-app-x");
+        // A late dynamic answer whose candidates do not extend the
+        // typed word is dropped instead of shrinking the input.
+        let candidates = vec![crate::completion::Candidate {
+            display: "zzz".to_string(),
+            insert: "zzz".to_string(),
+            is_dir: false,
+        }];
+        bar.apply_candidates_at(candidates, 16, "my-app-x", false);
+        assert_eq!(bar.buffer, "kubectl get pod my-app-x");
+
+        // Same guard on the multi-candidate LCP: no insert, no menu.
+        let candidates = vec![
+            crate::completion::Candidate {
+                display: "zz".to_string(),
+                insert: "zz".to_string(),
+                is_dir: false,
+            },
+            crate::completion::Candidate {
+                display: "zzz".to_string(),
+                insert: "zzz".to_string(),
+                is_dir: false,
+            },
+        ];
+        bar.apply_candidates_at(candidates, 16, "my-app-x", false);
+        assert_eq!(bar.buffer, "kubectl get pod my-app-x");
+        assert!(bar.completion.is_none());
+    }
+
+    #[test]
+    fn leading_space_and_blank_lines_stay_out_of_history() {
+        let mut bar = InputBar::new(true);
+        bar.insert_text("ls -la");
+        bar.take_submitted_line();
+
+        bar.insert_text(" secret-cmd");
+        assert_eq!(bar.take_submitted_line(), " secret-cmd");
+        bar.insert_text("   ");
+        bar.take_submitted_line();
+
+        assert_eq!(
+            bar.history.len(),
+            1,
+            "space-prefixed and blank lines never record"
+        );
+        assert!(!bar.last_history_is(" secret-cmd"));
     }
 
     #[test]

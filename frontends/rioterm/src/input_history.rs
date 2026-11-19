@@ -6,6 +6,7 @@
 // exist so future classification (per-directory / per-command ranking)
 // needs no format migration.
 
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -52,12 +53,15 @@ fn parse(raw: &str) -> Option<Entry> {
     Some(Entry { ts, cwd, line })
 }
 
-/// Load the recorded lines, oldest first. Adjacent duplicates are
-/// collapsed (mirrors the bar's push-time dedup), corrupt lines are
-/// skipped, and when the store grew past `cap` it is rewritten down to
-/// the newest `cap` entries. A missing or unreadable file yields an
-/// empty list — the bar falls back to session-only history.
-pub fn load(path: &Path, cap: usize) -> Vec<String> {
+/// Load the recorded entries, oldest first. Duplicates collapse
+/// globally keeping the *last* occurrence (`a b a` leaves `b`, `a` —
+/// Warp dedups at display time the same way, history.rs:441-462), so
+/// browsing never resurfaces a command that was re-run later; corrupt
+/// lines are skipped, and when the store grew past `cap` it is
+/// rewritten down to the newest `cap` entries. A missing or unreadable
+/// file yields an empty list — the bar falls back to session-only
+/// history.
+pub fn load_entries(path: &Path, cap: usize) -> Vec<Entry> {
     let Ok(content) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
@@ -70,19 +74,22 @@ pub fn load(path: &Path, cap: usize) -> Vec<String> {
         truncated = true;
     }
 
-    // Adjacent dedup on the way in, so browsing matches what the bar
-    // would have accumulated in a single session.
-    let mut lines: Vec<String> = Vec::with_capacity(entries.len());
-    for entry in entries {
-        if lines.last() != Some(&entry.line) {
-            lines.push(entry.line);
+    // Full dedup keeping the newest occurrence, order stays oldest →
+    // newest: walk backwards, keep first sightings, then reverse.
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut deduped: Vec<Entry> = Vec::with_capacity(entries.len());
+    for entry in entries.into_iter().rev() {
+        if seen.insert(entry.line.clone()) {
+            deduped.push(entry);
         }
     }
+    deduped.reverse();
 
     if truncated {
+        let lines: Vec<String> = deduped.iter().map(|e| e.line.clone()).collect();
         rewrite(path, &lines);
     }
-    lines
+    deduped
 }
 
 /// Append one submission. `Entry.cwd` comes from the caller (the
@@ -158,6 +165,13 @@ mod tests {
         }
     }
 
+    fn lines(store: &TempStore) -> Vec<String> {
+        load_entries(&store.0, MAX_ENTRIES)
+            .into_iter()
+            .map(|e| e.line)
+            .collect()
+    }
+
     #[test]
     fn append_and_load_roundtrip() {
         let store = TempStore::new("roundtrip");
@@ -165,28 +179,51 @@ mod tests {
         append(&store.0, &entry("cargo test"));
         append(&store.0, &entry("echo 中文 ok"));
 
-        let lines = load(&store.0, MAX_ENTRIES);
-        assert_eq!(lines, vec!["ls -la", "cargo test", "echo 中文 ok"]);
+        assert_eq!(lines(&store), vec!["ls -la", "cargo test", "echo 中文 ok"]);
     }
 
     #[test]
     fn missing_file_is_empty() {
         let store = TempStore::new("missing");
-        assert!(load(&store.0, MAX_ENTRIES).is_empty());
+        assert!(load_entries(&store.0, MAX_ENTRIES).is_empty());
     }
 
     #[test]
-    fn adjacent_duplicates_collapse_on_load() {
+    fn duplicates_collapse_globally_keeping_the_latest() {
         let store = TempStore::new("dedup");
         append(&store.0, &entry("git status"));
         append(&store.0, &entry("git status"));
         append(&store.0, &entry("ls"));
         append(&store.0, &entry("git status"));
 
-        assert_eq!(
-            load(&store.0, MAX_ENTRIES),
-            vec!["git status", "ls", "git status"]
+        // `a b a` leaves two entries ordered by their last occurrence,
+        // so ↑ browsing sees `git status` exactly once, as the newest.
+        assert_eq!(lines(&store), vec!["ls", "git status"]);
+    }
+
+    #[test]
+    fn dedup_keeps_the_last_occurrences_cwd() {
+        let store = TempStore::new("dedup-cwd");
+        append(
+            &store.0,
+            &Entry {
+                ts: 1,
+                cwd: "/old".into(),
+                line: "make".into(),
+            },
         );
+        append(
+            &store.0,
+            &Entry {
+                ts: 2,
+                cwd: "/new".into(),
+                line: "make".into(),
+            },
+        );
+
+        let entries = load_entries(&store.0, MAX_ENTRIES);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].cwd, "/new");
     }
 
     #[test]
@@ -195,17 +232,20 @@ mod tests {
         for i in 0..8 {
             append(&store.0, &entry(&format!("cmd-{i}")));
         }
-        let lines = load(&store.0, 4);
-        assert_eq!(lines, vec!["cmd-4", "cmd-5", "cmd-6", "cmd-7"]);
+        let tail = vec!["cmd-4", "cmd-5", "cmd-6", "cmd-7"];
+        let loaded: Vec<String> = load_entries(&store.0, 4)
+            .into_iter()
+            .map(|e| e.line)
+            .collect();
+        assert_eq!(loaded, tail);
 
         // The rewrite persisted: a second load sees the same trimmed
         // tail, and further appends keep working on top of it.
-        assert_eq!(load(&store.0, MAX_ENTRIES), lines);
+        assert_eq!(lines(&store), tail);
         append(&store.0, &entry("after"));
-        assert_eq!(
-            load(&store.0, MAX_ENTRIES),
-            vec!["cmd-4", "cmd-5", "cmd-6", "cmd-7", "after"]
-        );
+        let mut expected = tail;
+        expected.push("after");
+        assert_eq!(lines(&store), expected);
     }
 
     #[test]
@@ -217,7 +257,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(load(&store.0, MAX_ENTRIES), vec!["ls -la"]);
+        assert_eq!(lines(&store), vec!["ls -la"]);
     }
 
     #[test]
@@ -234,7 +274,7 @@ mod tests {
 
         let raw = std::fs::read_to_string(&store.0).unwrap();
         assert_eq!(raw, "42\t\tpwd\n");
-        assert_eq!(load(&store.0, MAX_ENTRIES), vec!["pwd"]);
+        assert_eq!(lines(&store), vec!["pwd"]);
     }
 
     #[test]
@@ -243,6 +283,6 @@ mod tests {
         // remainder as the line instead of dropping it.
         let store = TempStore::new("tab-in-line");
         std::fs::write(&store.0, "1700000000\t/dir\techo a\tb\n").unwrap();
-        assert_eq!(load(&store.0, MAX_ENTRIES), vec!["echo a\tb"]);
+        assert_eq!(lines(&store), vec!["echo a\tb"]);
     }
 }

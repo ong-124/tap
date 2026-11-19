@@ -70,11 +70,12 @@
   - 密文行为：字符画 `•`、压制虚化预选与 Tab 补全；sticky——回显中途恢复不解除，仅随行生命周期复位（提交/Ctrl+C 清空/载入历史条目）；↑ 载入历史解除密文、↓ 回 draft 按 `draft_masked` 恢复
   - 历史跳过：内存历史（take_submitted_line）与持久历史库（submit 侧显式 `!was_masked`，防密码恰同末条历史被相邻去重放过）双重拦截；ssh 会话内远程口令、raw 模式读口令等无信号场景不掩码为已知边界
   - 验证：teletypewriter 17（+规程探测测试）/ rioterm 336（+4 密文单测）通过，clippy/fmt 干净，待用户手测（正常提示符不再误掩码、sudo/ssh 本机口令显 `•`、历史库无密码残留）
-- [ ] 【待开始】借鉴 Warp 输入栏细节打磨（[详情](task/20261119-2003_借鉴Warp输入栏细节打磨.md)）
-  - P1 补全正确性：文件候选 shell 转义（复用 1801 的 sh_quote，替换串转义/显示串保留）、多候选循环目录统一补 `/`、插入前防缩短校验（候选须为当前词超集）、symlink 跟随判目录
-  - P2 历史库：load 全量去重保最新（替换相邻去重，存储仍只追加）、前导空格/全空白行不记录（内存与落盘双处）
-  - P3 建议逻辑：ghost 同 cwd 优先两桶扫描（load 需回 cwd 元数据，↑/↓ 浏览不变）、strip_prefix 渐进裁剪免重扫
-  - P4 可选：Ctrl+→ 逐词接受 ghost、Tab 决策四态纯函数化（顺手则做）；UI 类与 OSC 133 上报明确排除（原因见任务文档）
+- [x] 【已完成】借鉴 Warp 输入栏细节打磨（[详情](task/20261119-2003_借鉴Warp输入栏细节打磨.md)）
+  - P1 补全正确性：候选新增替换串 shell 转义（sh_escape 反斜杠逐字符、`~/` 头保持可展开，路径/Cobra/命令三处统一，显示串保留原名）、插入前防缩短校验（单候选与 LCP 双处，候选须为当前词超集否则整组丢弃）、symlink 跟随判目录（metadata() 跟随判定，symlink 目录补 `/`）；多候选目录补 `/` 经核已是既有行为，随 symlink 修复补齐缺口
+  - P2 历史库：load_entries 全量去重保最后出现（`a b a` 重启后 ↑ 只见一条 a，存储仍只追加）、前导空格/全空白行不记录（take_submitted_line 与落盘 gate 双处，records_history_line 共享谓词）
+  - P3 建议逻辑：ghost 同 cwd 优先两桶扫描（load_entries 回传 cwd、set_history_entries/set_last_history_cwd/set_focus_cwd 三点供数，焦点 cwd 在提交与 Tab 时快照，↑/↓ 浏览不变）、strip_prefix 渐进裁剪免重查（suggestion_line 存整行，打字/退格裁尾，偏移才重扫；焦点 cwd 变更绕过裁剪直接重排序）
+  - P4：Ctrl+→ 逐词接受 ghost（accept_suggestion_word，剩余续作 ghost，无 ghost 时透传终端 word-right，与既有绑定无冲突）；Tab 决策四态纯函数化未做（改动未自然触碰，不强求）
+  - 验证：rio-backend 229 / rioterm 365 测试通过（新增 17 个：转义 5、防缩短 1、历史去重/忽略空格 3、ghost cwd/裁剪/逐词 4、symlink 1 等），clippy/fmt 干净；librio 存在 3 个与本任务无关的既有 flaky（backwards_drag/osc8_links/iterm2_image，净树同样失败）；待用户手测清单见任务文档
 - [ ] 【待开始】OSC 133 信号接入输入栏（[详情](task/20261119-2024_OSC133信号接入输入栏.md)）
   - 事实修正：upstream rio 已带全套——spawn 自动注入（zsh ZDOTDIR/fish XDG_DATA_DIRS/PowerShell 重写，bash/cmd 不注入，`shell_integration/mod.rs`）、rio-vt 解析 OSC 133 A/N/C/D+exit 与 OSC 7 cwd、pane 级 current_directory 存储、`CommandFinished{exit_status,duration,route_id}` 事件已到 application 层（现仅驱动 notify-on-command-finish）
   - 接线一（exit 落历史）：提交侧记 pending(route_id,ts,line)，CommandFinished 按 route 匹配回填 TSV 第四列 exit（读侧兼容旧三列，低频全文件重写与 2003 任务共用机制，无标记 shell 永远三列=现状）

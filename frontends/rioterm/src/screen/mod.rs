@@ -240,10 +240,12 @@ impl Screen<'_> {
         );
         // Seed the bar's browsable history from the persistent store
         // (once per window; submissions append to the store directly).
-        renderer.input_bar.set_history(crate::input_history::load(
-            &crate::input_history::store_path(),
-            crate::input_history::MAX_ENTRIES,
-        ));
+        renderer
+            .input_bar
+            .set_history_entries(crate::input_history::load_entries(
+                &crate::input_history::store_path(),
+                crate::input_history::MAX_ENTRIES,
+            ));
         let padding_y_bottom = config.margin.bottom + renderer.input_bar.height();
 
         let bindings = crate::bindings::default_key_bindings(config);
@@ -1184,6 +1186,12 @@ impl Screen<'_> {
         // passes through so Ctrl+C still interrupts and Ctrl+D still
         // sends EOF.
         if mods == ModifiersState::CONTROL {
+            // Ctrl+→ accepts one word of the ghost suggestion when one
+            // is up; otherwise it passes through as the terminal's
+            // word-right (no default binding claims plain Ctrl+→).
+            if let Key::Named(NamedKey::ArrowRight) = key.logical_key.as_ref() {
+                return self.renderer.input_bar.accept_suggestion_word();
+            }
             let lower = match key.logical_key.as_ref() {
                 Key::Character(c) => c.to_lowercase(),
                 _ => String::new(),
@@ -1269,6 +1277,11 @@ impl Screen<'_> {
         #[cfg(target_os = "windows")]
         let (cwd, ssh_session_host) = (None, None);
 
+        // Refresh the focus snapshot while the pane's directory is
+        // already being probed (the ghost ranks same-cwd history first).
+        self.renderer
+            .input_bar
+            .set_focus_cwd(cwd.as_ref().map(|p| p.to_string_lossy().into_owned()));
         let mut sources = crate::completion::Sources::from_env(cwd);
         sources.session_ssh_host = ssh_session_host;
         self.renderer.input_bar.poll_dynamic();
@@ -1302,7 +1315,17 @@ impl Screen<'_> {
         if self.context_manager.close_if_exited() {
             return;
         }
-        if should_record && !line.is_empty() {
+        if should_record && self.renderer.input_bar.records_history_line(&line) {
+            // Stamp the run directory on the newest entry so the ghost
+            // suggestion can rank same-cwd history first, and refresh
+            // the focus snapshot: a `cd` lands here before the next
+            // prompt.
+            self.renderer
+                .input_bar
+                .set_last_history_cwd(&cwd.to_string_lossy());
+            self.renderer
+                .input_bar
+                .set_focus_cwd(Some(cwd.to_string_lossy().into_owned()));
             crate::input_history::append(
                 &crate::input_history::store_path(),
                 &crate::input_history::Entry {

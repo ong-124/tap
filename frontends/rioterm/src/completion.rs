@@ -120,7 +120,7 @@ pub fn command_candidates(prefix: &str, path_dirs: &[PathBuf]) -> Vec<Candidate>
             }
             candidates.push(Candidate {
                 display: name.clone(),
-                insert: name,
+                insert: sh_escape(&name),
                 is_dir: false,
             });
             if candidates.len() >= MAX_CANDIDATES {
@@ -199,7 +199,12 @@ pub fn path_candidates(
         if !name.starts_with(&prefix) {
             continue;
         }
-        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        // Follow symlinks: a link pointing at a directory completes with
+        // the `/` so the next Tab descends into it (Warp path.rs:62-70).
+        // `DirEntry::file_type` does not follow, hence the metadata call.
+        let is_dir = std::fs::metadata(entry.path())
+            .map(|meta| meta.is_dir())
+            .unwrap_or(false);
         let completed = if is_dir {
             format!("{name}/")
         } else {
@@ -207,7 +212,11 @@ pub fn path_candidates(
         };
         candidates.push(Candidate {
             display: completed.clone(),
-            insert: format!("{head}{completed}"),
+            // Replacement text is shell-escaped, display stays verbatim
+            // (Warp splits the two — path.rs:275-336). The head joins the
+            // escape pass: the typed word arrives unquoted from the
+            // tokenizer, so it must be re-escaped together with the name.
+            insert: sh_escape(&format!("{head}{completed}")),
             is_dir,
         });
         if candidates.len() >= MAX_CANDIDATES {
@@ -629,6 +638,51 @@ pub fn sh_quote(s: &str) -> String {
     }
 }
 
+/// Backslash-escape a completion word for insertion into the buffer.
+/// Unlike [`sh_quote`] (whole-word single quoting for remote shell
+/// lines) this keeps the text unquoted, so a leading `~/` still tilde
+/// expands and the insert stays visually close to the typed form —
+/// Warp's completion replacement style (warp_util/path.rs `escape`).
+/// Non-ASCII passes through: shell metacharacters are all ASCII.
+pub fn sh_escape(s: &str) -> String {
+    fn escape_char(c: char, out: &mut String) {
+        let safe = c.is_ascii_alphanumeric()
+            || matches!(c, '_' | '@' | '%' | '+' | '=' | ':' | ',' | '.' | '/' | '-')
+            || !c.is_ascii();
+        if safe {
+            out.push(c);
+        } else {
+            out.push('\\');
+            out.push(c);
+        }
+    }
+    let mut escaped = String::with_capacity(s.len());
+    // A leading `~` must stay unquoted for tilde expansion (Warp's
+    // `shell_escape` special case).
+    if let Some(rest) = s.strip_prefix("~/") {
+        escaped.push_str("~/");
+        for c in rest.chars() {
+            escape_char(c, &mut escaped);
+        }
+    } else {
+        for c in s.chars() {
+            escape_char(c, &mut escaped);
+        }
+    }
+    escaped
+}
+
+/// The unquoted text of a shell-escaped word, as the completion
+/// tokenizer sees it — the inverse of [`sh_escape`] for cycle-state
+/// bookkeeping (the bar compares candidates against tokenized words).
+pub fn unescape_word(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    tokenize(&chars)
+        .first()
+        .map(|token| token.text.clone())
+        .unwrap_or_default()
+}
+
 /// Watchdog deadlines: local `__complete` is one binary spawn; remote
 /// adds an ssh handshake and the tool's own API round trip.
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(5);
@@ -788,14 +842,17 @@ pub fn parse_complete_output(stdout: &str) -> (Vec<Candidate>, bool) {
         .into_iter()
         .take(MAX_CANDIDATES)
         .map(|name| {
-            let insert = if is_dir && !name.ends_with('/') {
+            // Same replacement/display split as path candidates: the
+            // insert is shell-escaped (a value with spaces stays one
+            // word), the display keeps the tool's raw text.
+            let word = if is_dir && !name.ends_with('/') {
                 format!("{name}/")
             } else {
                 name.clone()
             };
             Candidate {
-                display: insert.clone(),
-                insert,
+                display: word.clone(),
+                insert: sh_escape(&word),
                 is_dir,
             }
         })
@@ -1238,6 +1295,58 @@ mod tests {
     }
 
     #[test]
+    fn sh_escape_backslash_escapes_metacharacters() {
+        assert_eq!(sh_escape("plain-pod_1.2"), "plain-pod_1.2");
+        assert_eq!(sh_escape("my file"), r"my\ file");
+        assert_eq!(sh_escape("it's"), r"it\'s");
+        assert_eq!(sh_escape("a$b"), r"a\$b");
+        // Leading tilde stays expandable; a mid-word tilde is literal.
+        assert_eq!(sh_escape("~/my dir"), "~/my\\ dir");
+        assert_eq!(sh_escape("a~b"), r"a\~b");
+        // Non-ASCII passes through — shell metacharacters are ASCII.
+        assert_eq!(sh_escape("中文 文件"), "中文\\ 文件");
+        assert_eq!(unescape_word(&sh_escape("my file $dir")), "my file $dir");
+        assert_eq!(unescape_word(&sh_escape("~/a b")), "~/a b");
+    }
+
+    #[test]
+    fn path_candidates_escape_inserts_keep_display() {
+        let dir = TempDir::new("escaping");
+        std::fs::write(dir.path().join("my file.txt"), "").unwrap();
+        std::fs::write(dir.path().join("it's here"), "").unwrap();
+        let sources = sources_with(Some(dir.path().to_path_buf()), None);
+
+        let candidates = gather(2, "my", &sources);
+        assert_eq!(candidates[0].display, "my file.txt", "display verbatim");
+        assert_eq!(candidates[0].insert, r"my\ file.txt", "insert escaped");
+        assert_eq!(unescape_word(&candidates[0].insert), "my file.txt");
+
+        // The quote character is escaped too.
+        let candidates = gather(2, "it", &sources);
+        assert_eq!(candidates[0].insert, "it\\'s\\ here");
+    }
+
+    #[test]
+    fn symlinked_directories_complete_with_separator() {
+        let dir = TempDir::new("symlink");
+        std::fs::create_dir(dir.path().join("real")).unwrap();
+        std::os::unix::fs::symlink(dir.path().join("real"), dir.path().join("link"))
+            .unwrap();
+        let sources = sources_with(Some(dir.path().to_path_buf()), None);
+
+        // The symlink is followed for the directory test, so it gets
+        // the trailing slash like a real directory.
+        assert_eq!(inserts(gather(2, "li", &sources)), vec!["link/"]);
+        // A broken symlink falls back to file treatment (no slash).
+        std::os::unix::fs::symlink(
+            dir.path().join("nowhere"),
+            dir.path().join("dangling"),
+        )
+        .unwrap();
+        assert_eq!(inserts(gather(2, "da", &sources)), vec!["dangling"]);
+    }
+
+    #[test]
     fn parse_output_reads_candidates_and_directives() {
         let (candidates, no_space) = parse_complete_output("zebra\napple\n:4\n");
         assert!(!no_space);
@@ -1274,6 +1383,11 @@ mod tests {
             "_activeHelp_ This command does not take any more arguments\nnginx\n:4\n",
         );
         assert_eq!(inserts(candidates), vec!["nginx"]);
+
+        // Values with spaces insert shell-escaped, display verbatim.
+        let (candidates, _) = parse_complete_output("my pod\n:4\n");
+        assert_eq!(candidates[0].display, "my pod");
+        assert_eq!(inserts(candidates), vec![r"my\ pod"]);
     }
 
     #[test]
