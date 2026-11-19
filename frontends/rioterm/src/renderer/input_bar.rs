@@ -345,11 +345,6 @@ impl InputBar {
         self.broadcast = broadcast;
     }
 
-    #[inline]
-    pub fn is_broadcast(&self) -> bool {
-        self.broadcast
-    }
-
     /// Show a transient notice above the main line for a couple of
     /// seconds (broadcast panes skipped, ...). Render drops it once
     /// the deadline passes; a newer notice replaces an older one.
@@ -394,16 +389,10 @@ impl InputBar {
     }
 
     /// Replace the browsable history (startup load of the persistent
-    /// store). Any in-flight browse resets to the live line. Entries
-    /// arrive without cwd metadata, so the ghost ranks cwd-agnostically.
-    pub fn set_history(&mut self, history: Vec<String>) {
-        self.history_cwds.clear();
-        self.reset_history(history);
-    }
-
-    /// Same, with the per-entry cwd the persistent store recorded —
-    /// the ghost suggestion prefers entries from the focused pane's
-    /// directory (Warp next_command_model.rs:839-864).
+    /// store). Any in-flight browse resets to the live line. The
+    /// per-entry cwd the store recorded rides along: the ghost
+    /// suggestion prefers entries from the focused pane's directory
+    /// (Warp next_command_model.rs:839-864).
     pub fn set_history_entries(&mut self, entries: Vec<crate::input_history::Entry>) {
         self.history_cwds = entries.iter().map(|e| e.cwd.clone()).collect();
         self.reset_history(entries.into_iter().map(|e| e.line).collect());
@@ -1682,7 +1671,17 @@ mod tests {
 
     fn bar_with_history(entries: &[&str]) -> InputBar {
         let mut bar = InputBar::new(true);
-        bar.set_history(entries.iter().map(|s| s.to_string()).collect());
+        bar.set_history_entries(
+            entries
+                .iter()
+                .map(|line| crate::input_history::Entry {
+                    ts: 0,
+                    cwd: String::new(),
+                    line: line.to_string(),
+                    exit: None,
+                })
+                .collect(),
+        );
         bar
     }
 

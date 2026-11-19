@@ -27,10 +27,6 @@ wgpu = { workspace = true, optional = true }
 rio-backend = { workspace = true }
 rio-grid = { workspace = true }
 
-[dev-dependencies]
-pretty_assertions = "1.4.1"
-criterion = { workspace = true }
-
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 bitflags = { workspace = true }
 corcovado = { workspace = true }

@@ -59,7 +59,7 @@
   - 真实问题修复：未用 import ×3、X11 IME 函数指针 `as *const ()` 再转 usize、teletypewriter `uses_default_shell` 按 macOS cfg 门控、corcovado 冗余 homepage、删除从未编译的孤儿文件 font_cache.rs
   - 门控误报处理：`BorderConfig.color` / `should_draw_borders` / `set_metrics`（测试或待接分屏描边使用）按项目惯例加 `#[allow(dead_code)]`；rio-backend 测试专用 `onig` 移入 dev-deps 并删未用 `url`
   - 依赖清单清理：根 workspace 删 6 个无成员引用的依赖（frontends/wasm 非成员、版本就地内联）；rioterm `wgpu` 改 optional 挂 `wgpu` feature；sugarloaf 删 5 个未用依赖、`futures/rayon/thiserror` 挂 `wgpu` feature；librio-wasm 依赖移入 wasm32 target 表；rioterm 删 `lru`/`futures`
-  - 验证：默认构建与 `--features wgpu` 构建均 0 警告；rio-backend 228 / rioterm 332 / teletypewriter 17 测试通过
+  - 验证：默认构建与 `--features wgpu` 构建均 0 警告；rio-backend 228 / rioterm 332 / teletypewriter 17 测试通过；修复轮次一（20261119-2145）：工具链 1.100 `cargo::unused_dependencies` 默认 warn 暴露残留——rioterm dev-deps 整节删除（pretty_assertions 全仓库无引用、criterion 仅 rio-vt/sugarloaf/corcovado bench 用）+ 死方法 `is_broadcast`/`set_history` 删除（测试改走 set_history_entries），build 与 test 编译均 0 警告，rioterm 376 过
 - [x] 【已完成】输入栏动态补全（Cobra `__complete` 协议）+ SSH 主机/远程补全（[详情](task/20261119-1801_输入栏动态补全Cobra协议与SSH.md)）
   - 路由纯函数（tokenize 分词 / ssh_route 解析 / resolve_tool 别名）：按缓冲 argv 分发静态命令、静态路径、ssh 主机表、动态请求；`[input-bar] dynamic-completion`（默认开）与 `command-aliases`（`k = "kubectl"`）配置，关闭即回退旧静态行为
   - Cobra 系 CLI（kubectl/helm/gh/argocd/flux/kind/istioctl/docker）：后台线程 spawn `__completeNoDesc`（看门狗本地 5s/远程 12s），指令位落实（`:2` 无空格 / `:4` 不回退文件 / `:16` 目录 / `:32` 保序、过滤 `_activeHelp_`），TTL 10s 缓存，buffer 指纹防错插，render/击键/Tab 前三处 poll 非阻塞送达
