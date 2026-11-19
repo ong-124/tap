@@ -574,7 +574,6 @@ impl Screen<'_> {
         let old_island = self.renderer.island.take();
         // Same for the input bar: a config edit mid-composition must
         // not drop the buffer or history.
-        let dim_before = self.renderer.unfocused_split_dim();
         let mut old_input_bar = std::mem::take(&mut self.renderer.input_bar);
         let was_focused = self.renderer.is_window_focused;
         self.renderer = Renderer::new(config);
@@ -590,19 +589,6 @@ impl Screen<'_> {
             config.line_height,
         );
         let padding_y_bottom = config.margin.bottom + self.renderer.input_bar.height();
-        // The unfocused-split dim is baked into cell backgrounds during
-        // row emission; a config change must force a full rebuild or
-        // panes keep the old bake until something else damages them.
-        if self.renderer.unfocused_split_dim() != dim_before {
-            for grid in self.context_manager.contexts_mut() {
-                for item in grid.contexts_mut().values_mut() {
-                    item.val
-                        .renderable_content
-                        .pending_update
-                        .set_terminal_damage(rio_backend::event::TerminalDamage::Full);
-                }
-            }
-        }
         // Every terminal answers color queries from the palette; give
         // them the new one.
         let colors = rio_backend::config::colors::term::List::from(&config.colors);
@@ -4627,9 +4613,6 @@ impl Screen<'_> {
 
             let rasterizer = &mut self.grid_rasterizer;
             let renderer_ref = &self.renderer;
-            // Unfocused-split dim baked into the cell backgrounds during
-            // row emission — replaces the old overlay rect.
-            let unfocused_dim = renderer_ref.unfocused_split_dim();
             for (route_id, grid) in self.grids.iter_mut() {
                 let Some(p) = panels.iter_mut().find(|p| p.route_id == *route_id) else {
                     continue;
@@ -4695,36 +4678,6 @@ impl Screen<'_> {
                             })
                             .collect()
                     });
-
-                /// Blend a premultiplied cell background toward `tint`
-                /// by `factor`. Default-background cells (alpha 0, the
-                /// window bg shows through) become a translucent tint
-                /// fill so the whole pane darkens, not just cells with
-                /// an explicit color.
-                fn dim_cell_bg(rgba: [u8; 4], factor: f32, tint: [f32; 4]) -> [u8; 4] {
-                    let f = factor.clamp(0.0, 1.0);
-                    let [r, g, b, a] = rgba.map(|c| c as f32);
-                    if a == 0.0 {
-                        let alpha = (f * 255.0).round() as u8;
-                        [
-                            (tint[0] * alpha as f32).round() as u8,
-                            (tint[1] * alpha as f32).round() as u8,
-                            (tint[2] * alpha as f32).round() as u8,
-                            alpha,
-                        ]
-                    } else {
-                        let keep = 1.0 - f;
-                        let blend = |c: f32, t: f32| {
-                            (c * keep + t * 255.0 * f).round().clamp(0.0, 255.0) as u8
-                        };
-                        [
-                            blend(r, tint[0]),
-                            blend(g, tint[1]),
-                            blend(b, tint[2]),
-                            (a * keep + 255.0 * f).round().clamp(0.0, 255.0) as u8,
-                        ]
-                    }
-                }
 
                 // Small helper: rebuild one row into the grid's
                 // buffers. Closure-style to avoid duplicating the
@@ -4804,17 +4757,6 @@ impl Screen<'_> {
                             preedit_row.as_ref(),
                             &mut bg_scratch,
                         );
-                        // Inactive splits darken through their cell
-                        // backgrounds (characters keep full contrast);
-                        // focus switches force a full rebuild, so the
-                        // baked dim always matches the active pane.
-                        if let Some((factor, tint)) = unfocused_dim {
-                            if !p.is_active {
-                                for cell in bg_scratch.iter_mut() {
-                                    cell.rgba = dim_cell_bg(cell.rgba, factor, tint);
-                                }
-                            }
-                        }
                         let cursor_col_for_row = if p.cursor_visible
                             && (y as u16) == p.cursor_row
                             && p.cursor_shape != rio_backend::ansi::CursorShape::Hidden

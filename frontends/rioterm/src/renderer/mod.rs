@@ -232,8 +232,6 @@ pub struct Renderer {
     pub margin: rio_backend::config::layout::Margin,
     pub island: Option<island::Island>,
     pub command_palette: command_palette::CommandPalette,
-    unfocused_split_opacity: f32,
-    unfocused_split_fill: Option<ColorArray>,
     /// Route id of the pane rendered as active last frame. Keyed on
     /// `route_id` (globally unique) rather than the grid's taffy `NodeId`:
     /// each tab owns its own taffy tree and identically-shaped trees hand
@@ -321,8 +319,6 @@ impl Renderer {
         };
 
         Renderer {
-            unfocused_split_opacity: config.navigation.unfocused_split_opacity,
-            unfocused_split_fill: config.navigation.unfocused_split_fill,
             last_active: None,
             last_window_bg: None,
             use_drawable_chars: config.fonts.use_drawable_chars,
@@ -955,21 +951,6 @@ impl Renderer {
         } else {
             false
         }
-    }
-
-    /// Background dim for unfocused splits: `(factor, tint)` with
-    /// factor = `1.0 - unfocused_split_opacity` and the tint from
-    /// `unfocused_split_fill` (black when unset — the pane background
-    /// darkens, the characters stay at full contrast). The Screen
-    /// bakes it into the per-cell backgrounds during row emission, so
-    /// unlike the old overlay rect it never covers text and always
-    /// spans the exact cell grid. `None` when dimming is disabled.
-    pub fn unfocused_split_dim(&self) -> Option<(f32, [f32; 4])> {
-        if self.unfocused_split_opacity >= 1.0 {
-            return None;
-        }
-        let tint = self.unfocused_split_fill.unwrap_or([0.0, 0.0, 0.0, 1.0]);
-        Some((1.0 - self.unfocused_split_opacity, tint))
     }
 
     /// Scan visible rows for kitty Unicode-placeholder cells (U+10EEEE) and

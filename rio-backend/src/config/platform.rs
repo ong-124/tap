@@ -100,16 +100,8 @@ pub struct PlatformNavigation {
     pub use_split: Option<bool>,
     #[serde(default = "Option::default", rename = "open-config-with-split")]
     pub open_config_with_split: Option<bool>,
-    #[serde(default = "Option::default", rename = "unfocused-split-opacity")]
-    pub unfocused_split_opacity: Option<f32>,
     #[serde(default = "Option::default", rename = "max-tab-width")]
     pub max_tab_width: Option<f32>,
-    #[serde(
-        default = "Option::default",
-        deserialize_with = "crate::config::colors::deserialize_to_arr_opt",
-        rename = "unfocused-split-fill"
-    )]
-    pub unfocused_split_fill: Option<crate::config::colors::ColorArray>,
 }
 
 /// Platform-specific renderer config with optional fields for selective override

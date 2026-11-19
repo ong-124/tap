@@ -680,24 +680,11 @@ impl Config {
             if let Some(open_cfg_split) = navigation_overwrite.open_config_with_split {
                 self.navigation.open_config_with_split = open_cfg_split;
             }
-            if let Some(unfocused_opacity) = navigation_overwrite.unfocused_split_opacity
-            {
-                self.navigation.unfocused_split_opacity = unfocused_opacity;
-            }
-            if let Some(fill) = navigation_overwrite.unfocused_split_fill {
-                self.navigation.unfocused_split_fill = Some(fill);
-            }
             if let Some(max_tab_width) = navigation_overwrite.max_tab_width {
                 self.navigation.max_tab_width = max_tab_width;
             }
         }
 
-        // Clamp after platform merge so both the base and any override go
-        // through the same bound.
-        self.navigation.unfocused_split_opacity =
-            crate::config::navigation::clamp_unfocused_split_opacity(
-                self.navigation.unfocused_split_opacity,
-            );
         self.navigation.max_tab_width =
             crate::config::navigation::clamp_max_tab_width(self.navigation.max_tab_width);
 
