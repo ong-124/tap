@@ -835,6 +835,36 @@ fn mux_socket_dir() -> Option<&'static Path> {
     .as_deref()
 }
 
+/// The destination an *interactive* ssh session is heading for, read
+/// from a submitted line: the ssh family, a non-empty destination, and
+/// no remote command after it (`ssh host` / `autossh -M 0 host`, not
+/// the one-shot `ssh host uname -a`). Feeds the submit-time pre-warm.
+pub fn interactive_ssh_dest(line: &str) -> Option<String> {
+    let chars: Vec<char> = line.chars().collect();
+    let argv: Vec<String> = tokenize(&chars).into_iter().map(|t| t.text).collect();
+    let route = ssh_route(&argv)?;
+    // Interactive ⇔ the destination is the last token; anything after
+    // it is a remote command, which leaves no session to complete in.
+    (route.remote_start == Some(argv.len()) && !route.dest.is_empty())
+        .then_some(route.dest)
+}
+
+/// Open the side channel's ControlMaster before the first Tab needs
+/// it: the submit of an interactive ssh line names the destination, so
+/// the handshake overlaps the user logging in. Fire-and-forget on a
+/// detached thread; password-only hosts fail quietly within the
+/// connect deadline (the side channel needs passwordless auth anyway)
+/// and an already-warm master makes this a no-op.
+pub fn warm_ssh_side_channel(host: &str) {
+    let mut command = ssh_command(host, "true");
+    let host = host.to_string();
+    std::thread::spawn(move || {
+        if let Err(err) = command.output() {
+            tracing::debug!("ssh side-channel warmup for {host} failed: {err}");
+        }
+    });
+}
+
 /// Parse `__complete` output: candidate lines (a `\t` description is
 /// stripped) and the trailing `:<bits>` directive. Directive bits we
 /// honour: `2` no space after a single match, `16` candidates are
@@ -1509,5 +1539,22 @@ mod tests {
             assert!(rendered.contains("ControlPersist=10m"));
             assert!(rendered.contains("ControlPath="));
         }
+    }
+
+    #[test]
+    fn interactive_ssh_dest_flags_interactive_lines_only() {
+        assert_eq!(interactive_ssh_dest("ssh web-1"), Some("web-1".into()));
+        assert_eq!(
+            interactive_ssh_dest("autossh -M 0 web-1"),
+            Some("web-1".into())
+        );
+        assert_eq!(
+            interactive_ssh_dest("ssh -p 2222 web-1"),
+            Some("web-1".into())
+        );
+        // One-shot remote commands leave no session to complete in.
+        assert_eq!(interactive_ssh_dest("ssh web-1 uname -a"), None);
+        assert_eq!(interactive_ssh_dest("ssh"), None);
+        assert_eq!(interactive_ssh_dest("vim notes"), None);
     }
 }

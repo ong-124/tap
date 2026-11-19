@@ -1370,6 +1370,13 @@ impl Screen<'_> {
         self.scroll_bottom_when_cursor_not_visible();
         self.clear_selection();
 
+        // An interactive ssh submission names its destination right
+        // now: pre-warm the completion side channel's ControlMaster so
+        // even the first Tab in the session skips the handshake.
+        if let Some(host) = crate::completion::interactive_ssh_dest(&line) {
+            crate::completion::warm_ssh_side_channel(&host);
+        }
+
         let mut bytes = line.into_bytes();
         bytes.push(b'\r');
         self.send_input_bytes(bytes);
