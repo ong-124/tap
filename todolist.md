@@ -49,3 +49,9 @@
   - 根因：`input_bar` 字段漏加 `rename = "input-bar"`，serde 只认 `[input_bar]` 下划线节名，连字符节被静默忽略回落默认值；`[panel]` 实际一直生效（默认 6/10 → 8/12 视觉差异小）
   - 修复：补 rename 与全项目 kebab-case 键风格统一；新增回归测试 `test_input_bar_section_uses_hyphenated_key`
   - 验证：config 测试 96 passed；已重建 release/tap（x11），待用户重启实测输入栏 60% 宽居中、200px 高
+- [x] 【已完成】输入栏自建历史库 + 虚化预选 + Tab 补全（[详情](task/20261119-1527_输入栏自建历史库与虚化预选.md)）
+  - 自建持久历史库：tap 记录「用户对 tap 的输入」而非 shell 历史（不做 HISTFILE 解析/shell 集成），TSV `{ts}\t{cwd}\t{line}` 追加至 `{config_dir}/input-history`，相邻去重、上限 1 万、坏行跳过；启动载入尾部，↑/↓ 全历史浏览（draft 分叉语义不变）；cwd 元数据为将来分类备料
+  - 虚化预选（zsh-autosuggestions 语义）：光标尾部时按前缀匹配取最近历史条目，caret 后画暗色续写；`→`/`End` 整体接受、编辑即消失、preedit 期间压制、锁定态清空；变异时刷新（不在 render 每帧扫描）
+  - Tab 补全（仅文件系统）：首词 = PATH 可执行 + 30 内建，其余词 = 焦点 pane cwd 路径（`~` 展开、隐藏项过滤、目录补 `/`）；多候选 = 公共前缀 + 面板内候选行（高亮项保证可见）+ Tab 循环；Tab 一律消费不再泄漏 PTY（Shift+Tab 仍直通，自绑 Tab 优先）
+  - 配置：`[input-bar] record-history / suggestions`（默认开，热重载即时生效）；提交落盘在 close_if_exited 检查之后（pane 退出的行不记录），与内存相邻去重锁步
+  - 验证：rio-backend 228 / rioterm 330（新增 22）测试通过，clippy/fmt 干净，待用户手测（重启回显历史、建议接受/消失、补全循环、分屏各自 cwd、热重载开关）
