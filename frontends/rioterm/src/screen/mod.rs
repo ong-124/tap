@@ -4432,6 +4432,11 @@ impl Screen<'_> {
                 /// focused context, and a scrolled viewport has no
                 /// on-screen cursor row to anchor it to.
                 preedit_line: Option<rio_grid::preedit::PreeditLine>,
+                /// Panel content inset (`[panel] padding`) in drawable
+                /// pixels, applied to the grid origin so characters
+                /// stay clear of the pane border ring.
+                pad_left_px: f32,
+                pad_top_px: f32,
             }
 
             let (active_key, scaled_margin) = {
@@ -4559,6 +4564,8 @@ impl Screen<'_> {
                     cell_w,
                     cell_h,
                     font_px,
+                    pad_left_px: dim.margin.left * dim.dimension.scale,
+                    pad_top_px: dim.margin.top * dim.dimension.scale,
                     visible_rows,
                     row_styles,
                     extras,
@@ -4905,7 +4912,10 @@ impl Screen<'_> {
 
                 // Panel's grid origin in drawable-pixel space =
                 // window scaled_margin + the panel's layout rect
-                // offset inside the root container. Snap to integer
+                // offset inside the root container + the panel's
+                // padding inset (dimension.margin carries the
+                // `[panel] padding`, keeping characters clear of the
+                // pane border ring). Snap to integer
                 // pixels so `cell_size * grid_pos + grid_padding`
                 // always lands on pixel boundaries. Without this, a
                 // fractional margin (e.g. Taffy layout computing
@@ -4914,8 +4924,10 @@ impl Screen<'_> {
                 // `floor((pixel - padding) / cell_size)` disagrees
                 // with the text vertex's `cell_size * grid_pos`
                 // about where cell boundaries are → visible seams.
-                let panel_left = (scaled_margin.left + p.layout_rect[0]).round();
-                let panel_top = (scaled_margin.top + p.layout_rect[1]).round();
+                let panel_left =
+                    (scaled_margin.left + p.layout_rect[0] + p.pad_left_px).round();
+                let panel_top =
+                    (scaled_margin.top + p.layout_rect[1] + p.pad_top_px).round();
 
                 // Bg-tint uniforms fire ONLY for the active block
                 // style — the bg shader paints the cursor cell in

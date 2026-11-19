@@ -1205,8 +1205,14 @@ impl<T: rio_backend::event::EventListener> ContextGrid<T> {
         }
         for item in self.inner.values_mut() {
             let [_, _, width, height] = item.layout_rect;
-            // Clear margin since Taffy layout already accounts for spacing
-            item.val.dimension.margin = Margin::all(0.0);
+            // Panel padding is the content inset INSIDE the panel box:
+            // the grid keeps the box size as its extent, and the
+            // padding subtracts from it in `compute` so characters
+            // stop short of the pane border ring. (The window margin
+            // is already deducted by the root, hence the old zero.)
+            let padding = self.panel_config.padding;
+            item.val.dimension.margin =
+                Margin::new(padding.top, padding.right, padding.bottom, padding.left);
             item.val.dimension.update_width(width);
             item.val.dimension.update_height(height);
             item.push_layout(mid_drag);

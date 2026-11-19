@@ -37,7 +37,7 @@ fn default_panel_margin() -> Margin {
 
 #[inline]
 fn default_panel_padding() -> Margin {
-    Margin::all(5.0)
+    Margin::all(12.0)
 }
 
 #[inline]
@@ -230,6 +230,7 @@ mod tests {
     fn test_panel_default() {
         let panel = Panel::default();
         assert_eq!(panel.margin, Margin::all(2.0));
+        assert_eq!(panel.padding, Margin::all(12.0));
         assert_eq!(panel.row_gap, 0.0);
         assert_eq!(panel.column_gap, 0.0);
         assert_eq!(panel.border_width, 6.0);
