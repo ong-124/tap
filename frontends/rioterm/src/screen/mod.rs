@@ -574,6 +574,7 @@ impl Screen<'_> {
         let old_island = self.renderer.island.take();
         // Same for the input bar: a config edit mid-composition must
         // not drop the buffer or history.
+        let dim_before = self.renderer.unfocused_split_dim();
         let mut old_input_bar = std::mem::take(&mut self.renderer.input_bar);
         let was_focused = self.renderer.is_window_focused;
         self.renderer = Renderer::new(config);
@@ -589,6 +590,19 @@ impl Screen<'_> {
             config.line_height,
         );
         let padding_y_bottom = config.margin.bottom + self.renderer.input_bar.height();
+        // The unfocused-split dim is baked into cell backgrounds during
+        // row emission; a config change must force a full rebuild or
+        // panes keep the old bake until something else damages them.
+        if self.renderer.unfocused_split_dim() != dim_before {
+            for grid in self.context_manager.contexts_mut() {
+                for item in grid.contexts_mut().values_mut() {
+                    item.val
+                        .renderable_content
+                        .pending_update
+                        .set_terminal_damage(rio_backend::event::TerminalDamage::Full);
+                }
+            }
+        }
         // Every terminal answers color queries from the palette; give
         // them the new one.
         let colors = rio_backend::config::colors::term::List::from(&config.colors);
