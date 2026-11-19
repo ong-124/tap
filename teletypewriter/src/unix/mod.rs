@@ -1036,21 +1036,25 @@ pub fn tty_ptsname(fd: libc::c_int) -> Result<String, String> {
     Ok(str_buf)
 }
 
-/// Whether the pty echoes typed characters back (termios `ECHO`).
-/// Password and passphrase prompts turn echo off before reading, so
-/// callers use this to mask input-bar lines typed while it is off. A
-/// failed probe reads as enabled (no masking).
-pub fn echo_enabled(fd: RawFd) -> bool {
+/// Whether the pty looks like a program is reading a secret right now.
+/// Password / passphrase prompts (sudo, ssh, `read -s`, `getpass`) turn
+/// the echo off while keeping the canonical line discipline, so
+/// backspace and Ctrl+U still work through the kernel. Full-line
+/// editors (zsh ZLE, readline) also run with echo off, but raw —
+/// canonical off too — because they do their own echoing, so requiring
+/// canonical-on is what tells the two apart. A failed probe reads as
+/// "not a secret prompt".
+pub fn secret_prompt_expected(fd: RawFd) -> bool {
     let mut term = MaybeUninit::uninit();
     // SAFETY: `tcgetattr` only writes through the given pointer on
     // success; on failure the value is never read.
     let ok = unsafe { libc::tcgetattr(fd, term.as_mut_ptr()) } == 0;
     if !ok {
-        return true;
+        return false;
     }
     // SAFETY: initialized by the successful call above.
     let term = unsafe { term.assume_init() };
-    term.c_lflag & libc::ECHO != 0
+    term.c_lflag & libc::ECHO == 0 && term.c_lflag & libc::ICANON != 0
 }
 
 pub fn foreground_process_name(main_fd: RawFd, shell_pid: u32) -> String {
@@ -1223,10 +1227,10 @@ mod echo_tests {
     use super::*;
 
     /// The master probe mirrors the slave line discipline — the whole
-    /// trick behind password masking: sudo / ssh turn echo off on the
-    /// slave, and the bar sees it from the master fd.
+    /// trick behind password masking: sudo / ssh turn echo off (keeping
+    /// canonical) on the slave, and the bar sees it from the master fd.
     #[test]
-    fn echo_probe_follows_the_slave_discipline() {
+    fn secret_prompt_probe_follows_the_slave_discipline() {
         unsafe {
             let mut master: libc::c_int = -1;
             let mut slave: libc::c_int = -1;
@@ -1241,18 +1245,26 @@ mod echo_tests {
                 0
             );
 
-            // Default discipline: echo on.
-            assert!(echo_enabled(master));
+            // Default discipline: echo on, canonical on — not a secret.
+            assert!(!secret_prompt_expected(master));
 
-            // A password prompt turns echo off on the slave.
             let mut term: libc::termios = std::mem::zeroed();
             assert_eq!(libc::tcgetattr(slave, &mut term), 0);
-            term.c_lflag &= !libc::ECHO;
+
+            // A line editor (zsh ZLE / readline) runs raw: echo AND
+            // canonical off. It does its own echoing — not a secret.
+            term.c_lflag &= !(libc::ECHO | libc::ICANON);
             assert_eq!(libc::tcsetattr(slave, libc::TCSANOW, &term), 0);
-            assert!(!echo_enabled(master));
+            assert!(!secret_prompt_expected(master));
+
+            // A password prompt keeps canonical (backspace keeps
+            // working through the kernel) and only drops the echo.
+            term.c_lflag |= libc::ICANON;
+            assert_eq!(libc::tcsetattr(slave, libc::TCSANOW, &term), 0);
+            assert!(secret_prompt_expected(master));
 
             // A failed probe never masks.
-            assert!(echo_enabled(-1));
+            assert!(!secret_prompt_expected(-1));
 
             libc::close(master);
             libc::close(slave);

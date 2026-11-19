@@ -1214,20 +1214,21 @@ impl Screen<'_> {
         false
     }
 
-    /// Probe the focused pane's echo state before a keystroke or paste
-    /// joins the bar: password / passphrase prompts run with the pty
-    /// echo off, and anything typed while it is off is masked (bullets,
-    /// no suggestions, no Tab completion) and kept out of history —
-    /// in memory and the persistent store alike. Nothing turns the
-    /// mask back off; the line lifecycle does (submit / clear).
+    /// Probe the focused pane before a keystroke or paste joins the
+    /// bar: password / passphrase prompts (echo off, canonical on) get
+    /// masked input (bullets, no suggestions, no Tab completion) that
+    /// never reaches history — in memory or the persistent store.
+    /// Line editors (echo off, canonical off) are ordinary typing and
+    /// stay in the clear. Nothing turns the mask back off; the line
+    /// lifecycle does (submit / clear).
     fn probe_input_bar_mask(&mut self) {
         #[cfg(not(target_os = "windows"))]
         {
-            let echo = {
+            let secret = {
                 let current = self.context_manager.current();
-                teletypewriter::echo_enabled(*current.main_fd)
+                teletypewriter::secret_prompt_expected(*current.main_fd)
             };
-            if !echo {
+            if secret {
                 self.renderer.input_bar.set_masked(true);
             }
         }
