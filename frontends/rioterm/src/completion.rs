@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// Hard cap on returned candidates; keeps a bare-word Tab at the root
@@ -793,7 +793,12 @@ fn build_command(request: &DynamicRequest) -> Option<std::process::Command> {
 }
 
 /// A side-channel ssh that never prompts: password-less auth only and
-/// a connect deadline, so a slow or locked-down host fails fast.
+/// a connect deadline, so a slow or locked-down host fails fast. The
+/// connections multiplex over a shared ControlMaster — the first query
+/// to a host pays the handshake (TCP + KEX + auth), everything within
+/// `ControlPersist` reuses the channel in milliseconds. Without this
+/// every Tab press opened a fresh connection, which read as "ssh
+/// completion is slow" on any host with real RTT.
 fn ssh_command(host: &str, remote_line: &str) -> std::process::Command {
     let mut command = std::process::Command::new("ssh");
     command
@@ -801,9 +806,33 @@ fn ssh_command(host: &str, remote_line: &str) -> std::process::Command {
         .arg("BatchMode=yes")
         .arg("-o")
         .arg("ConnectTimeout=3")
-        .arg(host)
-        .arg(remote_line);
+        .arg("-o")
+        .arg("ControlMaster=auto");
+    if let Some(dir) = mux_socket_dir() {
+        // `%C` is ssh's own hash of the connection parameters: short
+        // (immune to the unix socket path limit) and one socket per
+        // destination. `auto` + ssh's socket perms make stale sockets
+        // and concurrent taps racing here both safe.
+        command
+            .arg("-o")
+            .arg(format!("ControlPath={}/%C", dir.to_string_lossy()))
+            .arg("-o")
+            .arg("ControlPersist=10m");
+    }
+    command.arg(host).arg(remote_line);
     command
+}
+
+/// `{cache}/rio/ssh-mux`, created once. Falls back to plain
+/// per-press connections when the cache dir is unavailable.
+fn mux_socket_dir() -> Option<&'static Path> {
+    static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = dirs::cache_dir()?.join("rio").join("ssh-mux");
+        std::fs::create_dir_all(&dir).ok()?;
+        Some(dir)
+    })
+    .as_deref()
 }
 
 /// Parse `__complete` output: candidate lines (a `\t` description is
@@ -1466,5 +1495,19 @@ mod tests {
             names.iter().any(|n| n.starts_with("kube")),
             "expected kube* commands from the remote host, got {names:?}"
         );
+    }
+
+    #[test]
+    fn ssh_side_channel_multiplexes_over_a_control_master() {
+        let rendered = format!("{:?}", ssh_command("user@host", "compgen -A command"));
+        assert!(rendered.contains("BatchMode=yes"));
+        assert!(rendered.contains("ConnectTimeout=3"));
+        assert!(rendered.contains("ControlMaster=auto"));
+        // The mux pair rides along whenever the cache dir resolved —
+        // which it does in a normal test environment.
+        if mux_socket_dir().is_some() {
+            assert!(rendered.contains("ControlPersist=10m"));
+            assert!(rendered.contains("ControlPath="));
+        }
     }
 }
