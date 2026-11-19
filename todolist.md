@@ -64,7 +64,7 @@
   - 路由纯函数（tokenize 分词 / ssh_route 解析 / resolve_tool 别名）：按缓冲 argv 分发静态命令、静态路径、ssh 主机表、动态请求；`[input-bar] dynamic-completion`（默认开）与 `command-aliases`（`k = "kubectl"`）配置，关闭即回退旧静态行为
   - Cobra 系 CLI（kubectl/helm/gh/argocd/flux/kind/istioctl/docker）：后台线程 spawn `__completeNoDesc`（看门狗本地 5s/远程 12s），指令位落实（`:2` 无空格 / `:4` 不回退文件 / `:16` 目录 / `:32` 保序、过滤 `_activeHelp_`），TTL 10s 缓存，buffer 指纹防错插，render/击键/Tab 前三处 poll 非阻塞送达
   - ssh：host 槽位静态主机表（config 非通配 Host + known_hosts 非 hashed、`user@` 头保留）；host 后远程查询（BatchMode+ConnectTimeout、sh_quote 转义、远程首词 compgen）；交互式 ssh 会话内经 tcgetpgrp + /proc 前台进程 cmdline 探测目的地（macOS 走 ps）走侧信道补全，不向现存会话注入文本
-  - 验证：rio-backend 229 / rioterm 352（+16）/ teletypewriter 17 测试通过，clippy 无新增告警，fmt 干净，helm 冒烟验证协议格式，待用户手测（kubectl 资源名、ssh 主机/远程、会话内侧信道、热重载开关、慢集群不错插）
+  - 验证：rio-backend 229 / rioterm 353（+17）/ teletypewriter 17 测试通过，clippy 无新增告警，fmt 干净，helm 冒烟验证协议格式；修复轮次一（autossh argv[0] 为解析路径 `/usr/lib/autossh/autossh` 致探测失败，改 basename 匹配）后真实 GUI 闭环验证通过——autossh 进 172.24.0.145 输 `kube` 连按 Tab，候选循环落盘 `kubelet`；待用户重启 tap 手测
 - [x] 【已完成】输入栏密码密文模式（[详情](task/20261119-1724_输入栏密码密文模式.md)）
   - 自动检测：击键/粘贴进缓冲前 `tcgetattr(main_fd)` 读 PTY 线路规程，teletypewriter `secret_prompt_expected`——「`ECHO` 关 + `ICANON` 开」= 口令提示（sudo/ssh/`read -s`）→ 自动密文；行编辑器（zsh ZLE/readline）raw 模式不误掩码（修复轮次一：首轮仅判 ECHO 导致正常提示符全变 `•`）；探测失败不掩码，无后台轮询线程
   - 密文行为：字符画 `•`、压制虚化预选与 Tab 补全；sticky——回显中途恢复不解除，仅随行生命周期复位（提交/Ctrl+C 清空/载入历史条目）；↑ 载入历史解除密文、↓ 回 draft 按 `draft_masked` 恢复

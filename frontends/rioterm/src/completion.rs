@@ -356,9 +356,11 @@ pub struct SshRoute {
 /// Parse `ssh [flags] [--] host [remote command...]`. Returns `None`
 /// when the line is not an ssh invocation. `dest_slot` is where the
 /// destination belongs even when nothing was typed there yet (all
-/// flags consumed), so `ssh <Tab>` still offers the host table.
+/// flags consumed), so `ssh <Tab>` still offers the host table. The
+/// command name matches on its basename — wrappers arrive as full
+/// paths in `/proc` cmdlines (`/usr/lib/autossh/autossh …`).
 pub fn ssh_route(argv: &[String]) -> Option<SshRoute> {
-    if argv.is_empty() || !SSH_TOOLS.contains(&argv[0].as_str()) {
+    if argv.is_empty() || !SSH_TOOLS.contains(&command_basename(&argv[0]).as_str()) {
         return None;
     }
     let mut i = 1;
@@ -422,17 +424,24 @@ fn ssh_flag_takes_value(tok: &str) -> bool {
 }
 
 /// Resolve a word to a Cobra tool name: explicit alias mapping first
-/// (`k` → `kubectl`), then the raw name.
+/// (`k` → `kubectl`), then the raw name — matched on the basename, so
+/// a fully qualified `/usr/local/bin/kubectl` also routes dynamically.
 pub fn resolve_tool(word: &str, aliases: &HashMap<String, String>) -> Option<String> {
     if let Some(target) = aliases.get(word) {
         if COBRA_TOOLS.contains(&target.as_str()) {
             return Some(target.clone());
         }
     }
-    if COBRA_TOOLS.contains(&word) {
-        return Some(word.to_string());
+    if COBRA_TOOLS.contains(&command_basename(word).as_str()) {
+        return Some(command_basename(word));
     }
     None
+}
+
+/// Last path component of a command token (`/usr/lib/autossh/autossh`
+/// → `autossh`, plain words pass through).
+fn command_basename(word: &str) -> String {
+    word.rsplit('/').next().unwrap_or(word).to_string()
 }
 
 /// Where a Tab press routes to, decided from the argv before the word.
@@ -1075,6 +1084,27 @@ mod tests {
     }
 
     #[test]
+    fn ssh_route_matches_wrapper_paths_from_proc_cmdlines() {
+        // Debian's autossh keeps a resolved script path as argv[0] —
+        // exactly what the session probe reads from /proc.
+        let argv = vec![
+            "/usr/lib/autossh/autossh".to_string(),
+            "-M".to_string(),
+            "0".to_string(),
+            "172.24.0.145".to_string(),
+        ];
+        let route = ssh_route(&argv).unwrap();
+        assert_eq!(route.dest, "172.24.0.145");
+        assert_eq!(route.dest_slot, 3);
+
+        // Fully qualified ssh in a one-shot line still parses.
+        let route = ssh_route(&["/usr/bin/ssh".to_string(), "web1".to_string()]).unwrap();
+        assert_eq!(route.dest, "web1");
+        // Non-ssh paths stay unmatched.
+        assert!(ssh_route(&["/usr/bin/tail".to_string(), "-f".to_string()]).is_none());
+    }
+
+    #[test]
     fn route_resolves_aliases_to_cobra_tools() {
         assert_eq!(resolve_tool("k", &aliases()).as_deref(), Some("kubectl"));
         assert_eq!(
@@ -1082,6 +1112,11 @@ mod tests {
             Some("kubectl")
         );
         assert_eq!(resolve_tool("k", &no_aliases()), None);
+        // A fully qualified Cobra binary routes too.
+        assert_eq!(
+            resolve_tool("/usr/local/bin/kubectl", &no_aliases()).as_deref(),
+            Some("kubectl")
+        );
         // An alias pointing at a non-Cobra tool is ignored.
         let plain = HashMap::from([("k".to_string(), "ls".to_string())]);
         assert_eq!(resolve_tool("k", &plain), None);
@@ -1290,5 +1325,32 @@ mod tests {
         if let Ok(result) = rx.recv() {
             assert_eq!(inserts(result.candidates), Vec::<String>::new());
         }
+    }
+
+    /// End-to-end pipeline against a live ssh host (key auth + kubectl
+    /// installed required): `route` picks the remote query, the worker
+    /// spawns the side channel, the parser yields command names. Run
+    /// explicitly: `cargo test -p rioterm e2e -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "needs network + key auth to the test host"]
+    fn e2e_remote_commands_pipeline_reaches_a_live_host() {
+        let host =
+            std::env::var("TAP_E2E_SSH_HOST").unwrap_or_else(|_| "172.24.0.145".into());
+        // In an ssh session the buffer is just "kube": empty argv in
+        // front, session host carried by Sources, not the line.
+        let request = match route(&[], 0, "kube", 0, &no_aliases(), Some(&host)) {
+            Route::Dynamic(request) => request,
+            other => panic!("expected dynamic route, got {other:?}"),
+        };
+        let rx = spawn_dynamic(request);
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("worker answers");
+        let names = inserts(result.candidates);
+        println!("remote candidates for kube: {names:?}");
+        assert!(
+            names.iter().any(|n| n.starts_with("kube")),
+            "expected kube* commands from the remote host, got {names:?}"
+        );
     }
 }
