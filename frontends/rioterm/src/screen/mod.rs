@@ -1206,11 +1206,31 @@ impl Screen<'_> {
             && !mods.super_key()
             && crate::renderer::is_printable_text(text)
         {
+            self.probe_input_bar_mask();
             self.renderer.input_bar.insert_text(text);
             return true;
         }
 
         false
+    }
+
+    /// Probe the focused pane's echo state before a keystroke or paste
+    /// joins the bar: password / passphrase prompts run with the pty
+    /// echo off, and anything typed while it is off is masked (bullets,
+    /// no suggestions, no Tab completion) and kept out of history —
+    /// in memory and the persistent store alike. Nothing turns the
+    /// mask back off; the line lifecycle does (submit / clear).
+    fn probe_input_bar_mask(&mut self) {
+        #[cfg(not(target_os = "windows"))]
+        {
+            let echo = {
+                let current = self.context_manager.current();
+                teletypewriter::echo_enabled(*current.main_fd)
+            };
+            if !echo {
+                self.renderer.input_bar.set_masked(true);
+            }
+        }
     }
 
     /// Build the completion environment (PATH from tap, home, and the
@@ -1244,8 +1264,14 @@ impl Screen<'_> {
         #[cfg(target_os = "windows")]
         let cwd = std::string::String::new();
 
+        // Masked lines are secrets: `take_submitted_line` already kept
+        // them out of the in-memory history; the explicit flag also
+        // guards the (paranoid) case of a password equal to the last
+        // history entry, which the dedup check alone would let through.
+        let was_masked = self.renderer.input_bar.is_masked();
         let line = self.renderer.input_bar.take_submitted_line();
         let should_record = self.renderer.input_bar.records_history()
+            && !was_masked
             && self.renderer.input_bar.last_history_is(&line);
         if self.context_manager.close_if_exited() {
             return;
@@ -4115,6 +4141,7 @@ impl Screen<'_> {
         // line instead of reaching the PTY (clipboard, middle-click
         // and multi-char IME commits all land here).
         if !text.is_empty() && self.input_bar_active(&self.get_mode()) {
+            self.probe_input_bar_mask();
             self.renderer.input_bar.insert_text(text);
             self.mark_dirty();
             return;

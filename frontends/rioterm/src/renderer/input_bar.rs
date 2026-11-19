@@ -48,6 +48,8 @@ pub const MAX_HISTORY: usize = 255;
 
 const PROMPT_SYMBOL: &str = "\u{276F}";
 const LOCKED_HINT: &str = "keys pass through";
+/// One bullet per character while the line is masked (password mode).
+const MASK_CHAR: char = '•';
 
 // Colors. The panel itself shares the window background; only the
 // thick border ring is the bar's own paint. Shared with the pane
@@ -65,10 +67,11 @@ const DEPTH_ELEMENT: f32 = 0.2;
 const ORDER: u8 = 20;
 
 /// Warp-style unified input bar pinned to the bottom of the window.
-/// Keyboard input lands here while the focused pane sits at a shell
-/// prompt (OSC 133 zone); a full line is written to the PTY on Enter.
-/// While a command runs the bar is locked and keys pass straight to
-/// the terminal.
+/// Keyboard input lands here unless the focused pane runs a full-screen
+/// program (alt screen), which locks the bar and passes keys straight
+/// to the terminal. A full line is written to the PTY on Enter; lines
+/// typed while the pty has echo off (password prompts) are masked and
+/// kept out of history.
 pub struct InputBar {
     enabled: bool,
     locked: bool,
@@ -93,6 +96,13 @@ pub struct InputBar {
     history_pos: Option<usize>,
     /// The live line, stashed while previewing history.
     draft: String,
+    /// Whether the live line was masked when history browsing stashed
+    /// it, so coming back down restores the mask.
+    draft_masked: bool,
+    /// Password mode: draw bullets, suppress suggestions, skip history.
+    /// Sticky once a line turns masked (an echo recovery mid-line must
+    /// never re-reveal typed characters); resets with the line.
+    masked: bool,
     preedit: Option<String>,
     /// Ghost suggestion (zsh-autosuggestions style): the suffix of the
     /// most recent history entry matching the buffer as a prefix,
@@ -138,6 +148,8 @@ impl Default for InputBar {
             history: Vec::new(),
             history_pos: None,
             draft: String::new(),
+            draft_masked: false,
+            masked: false,
             preedit: None,
             suggestion: None,
             completion: None,
@@ -263,6 +275,25 @@ impl InputBar {
         self.preedit.is_some()
     }
 
+    /// Turn on password masking (the caller probes the pty's echo
+    /// state; echo off = a prompt reading a secret). One-way for the
+    /// lifetime of the line: only `clear` / `take_submitted_line` /
+    /// leaving for a history entry lift it, so a mid-line echo recovery
+    /// can never re-reveal what was typed.
+    pub fn set_masked(&mut self, masked: bool) {
+        if masked && !self.masked {
+            self.masked = true;
+            self.suggestion = None;
+            self.completion = None;
+            self.caret_blink_start = Instant::now();
+        }
+    }
+
+    #[inline]
+    pub fn is_masked(&self) -> bool {
+        self.masked
+    }
+
     #[inline]
     pub fn preedit_text(&self) -> Option<String> {
         self.preedit.clone()
@@ -285,6 +316,8 @@ impl InputBar {
         self.history = history;
         self.history_pos = None;
         self.draft.clear();
+        self.draft_masked = false;
+        self.masked = false;
         self.invalidate_completion();
         self.refresh_suggestion();
     }
@@ -321,6 +354,7 @@ impl InputBar {
     /// browsing — otherwise `None`.
     fn refresh_suggestion(&mut self) {
         let suffix = if self.suggestions
+            && !self.masked
             && self.preedit.is_none()
             && self.history_pos.is_none()
             && self.cursor == self.char_count()
@@ -360,7 +394,7 @@ impl InputBar {
     /// full candidates. An empty word or no matches consumes the key
     /// without acting.
     pub fn tab_complete(&mut self, sources: &crate::completion::Sources) {
-        if self.preedit.is_some() {
+        if self.preedit.is_some() || self.masked {
             return;
         }
 
@@ -483,6 +517,8 @@ impl InputBar {
         self.view_start = 0;
         self.history_pos = None;
         self.draft.clear();
+        self.draft_masked = false;
+        self.masked = false;
         self.preedit = None;
         self.invalidate_completion();
         self.refresh_suggestion();
@@ -615,6 +651,7 @@ impl InputBar {
         self.history_pos = match self.history_pos {
             None => {
                 self.draft = self.buffer.clone();
+                self.draft_masked = self.masked;
                 Some(self.history.len() - 1)
             }
             Some(0) => return,
@@ -636,6 +673,8 @@ impl InputBar {
             self.buffer = self.draft.clone();
             self.cursor = self.char_count();
             self.view_start = 0;
+            // Back to the stashed live line: restore its mask with it.
+            self.masked = self.draft_masked;
             self.invalidate_completion();
             self.refresh_suggestion();
         }
@@ -645,15 +684,20 @@ impl InputBar {
         self.buffer = self.history[pos].clone();
         self.cursor = self.char_count();
         self.view_start = 0;
+        // History entries are public record: never masked.
+        self.masked = false;
         self.invalidate_completion();
         self.refresh_suggestion();
     }
 
     /// Hand the composed line to the caller, record it in history
-    /// (skipping empty and repeated entries) and reset the editor.
+    /// (skipping empty, repeated and masked entries) and reset the
+    /// editor. Masked lines — passwords — never reach history, memory
+    /// or persistent alike.
     pub fn take_submitted_line(&mut self) -> String {
         let line = self.buffer.clone();
-        if !line.is_empty() && self.history.last() != Some(&line) {
+        let secret = self.masked;
+        if !secret && !line.is_empty() && self.history.last() != Some(&line) {
             self.history.push(line.clone());
             if self.history.len() > MAX_HISTORY {
                 self.history.remove(0);
@@ -664,6 +708,8 @@ impl InputBar {
         self.view_start = 0;
         self.history_pos = None;
         self.draft.clear();
+        self.draft_masked = false;
+        self.masked = false;
         self.preedit = None;
         self.invalidate_completion();
         self.refresh_suggestion();
@@ -860,7 +906,15 @@ impl InputBar {
             sugarloaf.text_mut().measure(&suggestion, &suggestion_opts)
         };
 
-        let chars: Vec<char> = self.buffer.chars().collect();
+        let mut chars: Vec<char> = self.buffer.chars().collect();
+        // Masked (password) lines draw one bullet per character; the
+        // char count is unchanged, so the scroll window and caret math
+        // carry over untouched.
+        if self.masked {
+            for c in &mut chars {
+                *c = MASK_CHAR;
+            }
+        }
         // The composition text sits at the caret; keep room for it and
         // for the ghost suffix (they are mutually exclusive).
         let budget = max_text_width
@@ -1457,5 +1511,74 @@ mod tests {
         bar.insert_text("no/suchpath");
         bar.tab_complete(&sources);
         assert_eq!(bar.buffer, "no/suchpath");
+    }
+
+    #[test]
+    fn masking_is_sticky_and_skips_history() {
+        let mut bar = InputBar::new(true);
+        bar.insert_text("ls -la");
+        bar.take_submitted_line();
+
+        bar.insert_text("hunter2");
+        bar.set_masked(true);
+        // A mid-line echo recovery must never unmask the line.
+        bar.set_masked(false);
+        assert!(bar.is_masked());
+
+        let line = bar.take_submitted_line();
+        assert_eq!(line, "hunter2");
+        assert!(!bar.is_masked(), "submit resets the mask");
+        assert_eq!(
+            bar.history.last().map(String::as_str),
+            Some("ls -la"),
+            "the secret never enters memory history"
+        );
+        assert!(!bar.last_history_is(&line));
+    }
+
+    #[test]
+    fn masking_resets_with_the_line() {
+        let mut bar = InputBar::new(true);
+        bar.insert_text("s3cret");
+        bar.set_masked(true);
+        bar.clear();
+        assert!(!bar.is_masked());
+
+        bar.insert_text("s3cret");
+        bar.set_masked(true);
+        bar.take_submitted_line();
+        assert!(!bar.is_masked());
+    }
+
+    #[test]
+    fn history_browsing_unmasks_and_the_draft_remasks() {
+        let mut bar = InputBar::new(true);
+        bar.insert_text("ls -la");
+        bar.take_submitted_line();
+
+        bar.insert_text("s3cret");
+        bar.set_masked(true);
+        bar.history_previous();
+        assert_eq!(bar.buffer, "ls -la");
+        assert!(!bar.is_masked(), "history entries are public");
+
+        bar.history_next();
+        assert_eq!(bar.buffer, "s3cret");
+        assert!(bar.is_masked(), "the draft restores its mask");
+    }
+
+    #[test]
+    fn suggestion_suppressed_while_masked() {
+        let mut bar = InputBar::new(true);
+        bar.insert_text("ls -la");
+        bar.take_submitted_line();
+
+        bar.insert_text("l");
+        assert_eq!(bar.suggestion.as_deref(), Some("s -la"));
+
+        bar.set_masked(true);
+        assert_eq!(bar.suggestion, None, "no ghost over a secret");
+        bar.insert_text("s");
+        assert_eq!(bar.suggestion, None);
     }
 }

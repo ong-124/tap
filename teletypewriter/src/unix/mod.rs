@@ -1036,6 +1036,23 @@ pub fn tty_ptsname(fd: libc::c_int) -> Result<String, String> {
     Ok(str_buf)
 }
 
+/// Whether the pty echoes typed characters back (termios `ECHO`).
+/// Password and passphrase prompts turn echo off before reading, so
+/// callers use this to mask input-bar lines typed while it is off. A
+/// failed probe reads as enabled (no masking).
+pub fn echo_enabled(fd: RawFd) -> bool {
+    let mut term = MaybeUninit::uninit();
+    // SAFETY: `tcgetattr` only writes through the given pointer on
+    // success; on failure the value is never read.
+    let ok = unsafe { libc::tcgetattr(fd, term.as_mut_ptr()) } == 0;
+    if !ok {
+        return true;
+    }
+    // SAFETY: initialized by the successful call above.
+    let term = unsafe { term.assume_init() };
+    term.c_lflag & libc::ECHO != 0
+}
+
 pub fn foreground_process_name(main_fd: RawFd, shell_pid: u32) -> String {
     let mut pid = unsafe { libc::tcgetpgrp(main_fd) };
     if pid < 0 {
@@ -1198,5 +1215,47 @@ mod termp_tests {
         let term = create_termp(true);
         assert_eq!(term.c_ospeed, libc::B230400);
         assert_eq!(term.c_ispeed, libc::B230400);
+    }
+}
+
+#[cfg(test)]
+mod echo_tests {
+    use super::*;
+
+    /// The master probe mirrors the slave line discipline — the whole
+    /// trick behind password masking: sudo / ssh turn echo off on the
+    /// slave, and the bar sees it from the master fd.
+    #[test]
+    fn echo_probe_follows_the_slave_discipline() {
+        unsafe {
+            let mut master: libc::c_int = -1;
+            let mut slave: libc::c_int = -1;
+            assert_eq!(
+                libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                ),
+                0
+            );
+
+            // Default discipline: echo on.
+            assert!(echo_enabled(master));
+
+            // A password prompt turns echo off on the slave.
+            let mut term: libc::termios = std::mem::zeroed();
+            assert_eq!(libc::tcgetattr(slave, &mut term), 0);
+            term.c_lflag &= !libc::ECHO;
+            assert_eq!(libc::tcsetattr(slave, libc::TCSANOW, &term), 0);
+            assert!(!echo_enabled(master));
+
+            // A failed probe never masks.
+            assert!(echo_enabled(-1));
+
+            libc::close(master);
+            libc::close(slave);
+        }
     }
 }
