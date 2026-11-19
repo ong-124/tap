@@ -265,7 +265,7 @@ pub struct Config {
     pub enable_input_bar: bool,
     /// `[input-bar]` — bar geometry: centered width and height, each
     /// in pixels or percent of the window.
-    #[serde(default = "InputBarConfig::default")]
+    #[serde(default = "InputBarConfig::default", rename = "input-bar")]
     pub input_bar: InputBarConfig,
     #[serde(
         default = "default_scrollback_history_limit",
@@ -909,6 +909,28 @@ enable-input-bar = false
         assert_eq!(result.colors.foreground, colors::defaults::foreground());
         assert_eq!(result.colors.tabs_active, colors::defaults::tabs_active());
         assert_eq!(result.colors.cursor, colors::defaults::cursor());
+    }
+
+    #[test]
+    fn test_input_bar_section_uses_hyphenated_key() {
+        use crate::config::input_bar::SizeSpec;
+
+        let config: Config = toml::from_str("").unwrap();
+        assert_eq!(config.input_bar, InputBarConfig::default());
+
+        // The documented section name is hyphenated; a missing serde
+        // rename made this whole section silently fall back to
+        // defaults before.
+        let config: Config = toml::from_str(
+            r#"
+            [input-bar]
+            width = "60%"
+            height = 200
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.input_bar.width, SizeSpec::Percent(60.0));
+        assert_eq!(config.input_bar.height, Some(SizeSpec::Px(200.0)));
     }
 
     #[test]
