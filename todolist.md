@@ -75,3 +75,14 @@
   - P2 历史库：load 全量去重保最新（替换相邻去重，存储仍只追加）、前导空格/全空白行不记录（内存与落盘双处）
   - P3 建议逻辑：ghost 同 cwd 优先两桶扫描（load 需回 cwd 元数据，↑/↓ 浏览不变）、strip_prefix 渐进裁剪免重扫
   - P4 可选：Ctrl+→ 逐词接受 ghost、Tab 决策四态纯函数化（顺手则做）；UI 类与 OSC 133 上报明确排除（原因见任务文档）
+- [ ] 【待开始】OSC 133 信号接入输入栏（[详情](task/20261119-2024_OSC133信号接入输入栏.md)）
+  - 事实修正：upstream rio 已带全套——spawn 自动注入（zsh ZDOTDIR/fish XDG_DATA_DIRS/PowerShell 重写，bash/cmd 不注入，`shell_integration/mod.rs`）、rio-vt 解析 OSC 133 A/N/C/D+exit 与 OSC 7 cwd、pane 级 current_directory 存储、`CommandFinished{exit_status,duration,route_id}` 事件已到 application 层（现仅驱动 notify-on-command-finish）
+  - 接线一（exit 落历史）：提交侧记 pending(route_id,ts,line)，CommandFinished 按 route 匹配回填 TSV 第四列 exit（读侧兼容旧三列，低频全文件重写与 2003 任务共用机制，无标记 shell 永远三列=现状）
+  - 接线二（cwd 真值）：Tab 补全 Sources 与历史 Entry 的 cwd 改为 OSC 7 `current_directory` 优先、`foreground_process_path` 探测降兜底（ssh 远端不更新 OSC 7，须探测兜底对齐 1801 逻辑）；服务 2003 任务 P3「ghost 同 cwd 优先」
+  - 明确不动：锁定判定维持修复轮次八（仅 ALT_SCREEN，标记只增强不门控）；bash/cmd 注入、远端标记、exit 的 UI 展示不做
+  - 验证：cargo test + 手测（zsh 提交后 input-history 尾行带 exit 列；bash 三列不变；ssh 补全 cwd 仍正确）
+- [ ] 【待开始】输入广播（多分屏同步提交）（[详情](task/20261119-2024_输入广播多分屏同步提交.md)）
+  - 形态（输入栏架构下天然收敛）：广播开关 toggle，开启期间提交 fan-out `line+\r` 到 scope 内全部 pane；逐键/控制键不广播（规避 tmux 广播灌控制键进 vim 的破坏性）
+  - v1 scope：当前标签全部分屏；安全边界：仅发非 ALT_SCREEN 锁定 pane，跳过时提示跳过数；最小可见性：开启时提示符前加标识（`>>` 或变色）；广播提交只记一条历史（焦点 pane cwd）
+  - 开放点：键位（候选 leader+B，对照快捷键清单避让）、多 pane cwd 补全归属（v1 仍按焦点 pane）、将来与 OSC 133 AtPrompt 真值联动
+  - 验证：cargo test + 手测（三 split 一次提交三处执行；vim pane 跳过且提示；关闭恢复单发；↑ 历史只多一条）
