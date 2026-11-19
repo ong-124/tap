@@ -678,17 +678,17 @@ pub fn default_key_bindings(config: &rio_backend::config::Config) -> Vec<KeyBind
         Key::Named(End),      ModifiersState::SHIFT, ~BindingMode::ALT_SCREEN; Action::ScrollToBottom;
         Key::Named(PageUp),   ModifiersState::SHIFT, ~BindingMode::ALT_SCREEN; Action::ScrollPageUp;
         Key::Named(PageDown), ModifiersState::SHIFT, ~BindingMode::ALT_SCREEN; Action::ScrollPageDown;
-        Key::Named(Home),  +BindingMode::APP_CURSOR, ~BindingMode::VI;
+        Key::Named(Home),  +BindingMode::APP_CURSOR, ~BindingMode::VI, ~BindingMode::INPUT_BAR;
             Action::Esc("\x1bOH".into());
-        Key::Named(End),   +BindingMode::APP_CURSOR, ~BindingMode::VI;
+        Key::Named(End),   +BindingMode::APP_CURSOR, ~BindingMode::VI, ~BindingMode::INPUT_BAR;
             Action::Esc("\x1bOF".into());
-        Key::Named(ArrowUp),    +BindingMode::APP_CURSOR, ~BindingMode::VI;
+        Key::Named(ArrowUp),    +BindingMode::APP_CURSOR, ~BindingMode::VI, ~BindingMode::INPUT_BAR;
             Action::Esc("\x1bOA".into());
-        Key::Named(ArrowDown),  +BindingMode::APP_CURSOR, ~BindingMode::VI;
+        Key::Named(ArrowDown),  +BindingMode::APP_CURSOR, ~BindingMode::VI, ~BindingMode::INPUT_BAR;
             Action::Esc("\x1bOB".into());
-        Key::Named(ArrowRight), +BindingMode::APP_CURSOR, ~BindingMode::VI;
+        Key::Named(ArrowRight), +BindingMode::APP_CURSOR, ~BindingMode::VI, ~BindingMode::INPUT_BAR;
             Action::Esc("\x1bOC".into());
-        Key::Named(ArrowLeft),  +BindingMode::APP_CURSOR, ~BindingMode::VI;
+        Key::Named(ArrowLeft),  +BindingMode::APP_CURSOR, ~BindingMode::VI, ~BindingMode::INPUT_BAR;
             Action::Esc("\x1bOD".into());
 
         // VI Mode
@@ -768,10 +768,10 @@ pub fn default_key_bindings(config: &rio_backend::config::Config) -> Vec<KeyBind
 
     bindings.extend(bindings!(
         KeyBinding;
-        Key::Named(ArrowUp), ~BindingMode::APP_CURSOR, ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC; Action::Esc("\x1b[A".into());
-        Key::Named(ArrowDown), ~BindingMode::APP_CURSOR, ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC; Action::Esc("\x1b[B".into());
-        Key::Named(ArrowRight), ~BindingMode::APP_CURSOR, ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC; Action::Esc("\x1b[C".into());
-        Key::Named(ArrowLeft),  ~BindingMode::APP_CURSOR, ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC; Action::Esc("\x1b[D".into());
+        Key::Named(ArrowUp), ~BindingMode::APP_CURSOR, ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::INPUT_BAR; Action::Esc("\x1b[A".into());
+        Key::Named(ArrowDown), ~BindingMode::APP_CURSOR, ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::INPUT_BAR; Action::Esc("\x1b[B".into());
+        Key::Named(ArrowRight), ~BindingMode::APP_CURSOR, ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::INPUT_BAR; Action::Esc("\x1b[C".into());
+        Key::Named(ArrowLeft),  ~BindingMode::APP_CURSOR, ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::INPUT_BAR; Action::Esc("\x1b[D".into());
         Key::Named(Insert),     ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_KEYS; Action::Esc("\x1b[2~".into());
         Key::Named(Delete),     ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_KEYS, ~BindingMode::INPUT_BAR; Action::Esc("\x1b[3~".into());
         Key::Named(PageUp),     ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_KEYS; Action::Esc("\x1b[5~".into());

@@ -818,16 +818,9 @@ impl Renderer {
             (window_size.width, window_size.height, scale_factor),
         );
 
-        // The bar shares the window background; only its border ring
-        // is its own paint.
-        let input_bar_bg = self
-            .last_window_bg
-            .map(|c| [c.r as f32, c.g as f32, c.b as f32, c.a as f32])
-            .unwrap_or(self.named_colors.background.0);
         self.input_bar.render(
             sugarloaf,
             (window_size.width, window_size.height, scale_factor),
-            input_bar_bg,
         );
 
         // Render scrollbars for each panel

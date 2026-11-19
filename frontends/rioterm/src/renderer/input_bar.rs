@@ -5,7 +5,7 @@
 
 use rio_backend::sugarloaf::text::DrawOpts;
 use rio_backend::sugarloaf::Sugarloaf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Convert `[f32; 4]` colour to the `[u8; 4]` non-premul form the
 /// `Text` draw path expects (the vertex shader premultiplies).
@@ -29,12 +29,13 @@ pub const INPUT_FONT_SCALE: f32 = 2.0;
 const PANEL_INSET_X: f32 = 8.0;
 const PANEL_INSET_Y: f32 = 4.0;
 const BORDER_STROKE: f32 = 4.0;
-const BORDER_RADIUS: f32 = 12.0;
 const TEXT_PADDING_X: f32 = 12.0;
 const PROMPT_GAP: f32 = 10.0;
 
 const CARET_WIDTH: f32 = 2.0;
-const CARET_BLINK_MS: u128 = 500;
+/// Blink period shared by the render-time phase math and the wake the
+/// Screen re-arms after every frame.
+pub const CARET_BLINK_MS: u128 = 500;
 const PREEDIT_UNDERLINE_HEIGHT: f32 = 2.0;
 
 /// Kept in memory only, mirroring the search history limit.
@@ -368,24 +369,12 @@ impl InputBar {
         line
     }
 
-    /// Time until the next caret blink boundary, for the render
-    /// scheduler. `None` when there is nothing to animate.
-    pub fn next_wake_in(&self) -> Option<Duration> {
-        if !self.enabled || self.locked {
-            return None;
-        }
-        let elapsed = self.caret_blink_start.elapsed().as_millis();
-        Some(Duration::from_millis(
-            (CARET_BLINK_MS - elapsed % CARET_BLINK_MS) as u64,
-        ))
+    #[inline]
+    pub fn is_locked(&self) -> bool {
+        self.locked
     }
 
-    pub fn render(
-        &mut self,
-        sugarloaf: &mut Sugarloaf,
-        dimensions: (f32, f32, f32),
-        window_bg: [f32; 4],
-    ) {
+    pub fn render(&mut self, sugarloaf: &mut Sugarloaf, dimensions: (f32, f32, f32)) {
         if !self.enabled || self.height_px <= 0.0 || self.font_size <= 0.0 {
             // Immediate mode: not drawing == not visible.
             return;
@@ -395,9 +384,11 @@ impl InputBar {
         let logical_width = window_width / scale_factor;
         let logical_height = window_height / scale_factor;
 
-        // Framed panel floating inside the reserved band. The inner
-        // fill is the shared window background — the bar carries no
-        // paint of its own except the thick translucent border ring.
+        // Framed panel floating inside the reserved band. The center
+        // stays fully transparent — the window background (or image)
+        // shows through and the bar's own paint is only the thick
+        // translucent border, drawn as four edge rects since a filled
+        // ring cannot punch a hole through to what is behind.
         let panel_x = PANEL_INSET_X;
         let panel_y = logical_height - self.height_px + PANEL_INSET_Y;
         let panel_w = (logical_width - PANEL_INSET_X * 2.0).max(0.0);
@@ -408,26 +399,44 @@ impl InputBar {
         } else {
             BORDER_COLOR
         };
-        sugarloaf.rounded_rect(
+        sugarloaf.rect(
             None,
             panel_x,
             panel_y,
             panel_w,
+            BORDER_STROKE,
+            border,
+            DEPTH_BG,
+            ORDER,
+        );
+        sugarloaf.rect(
+            None,
+            panel_x,
+            panel_y + panel_h - BORDER_STROKE,
+            panel_w,
+            BORDER_STROKE,
+            border,
+            DEPTH_BG,
+            ORDER,
+        );
+        sugarloaf.rect(
+            None,
+            panel_x,
+            panel_y,
+            BORDER_STROKE,
             panel_h,
             border,
             DEPTH_BG,
-            BORDER_RADIUS,
             ORDER,
         );
-        sugarloaf.rounded_rect(
+        sugarloaf.rect(
             None,
-            panel_x + BORDER_STROKE,
-            panel_y + BORDER_STROKE,
-            (panel_w - BORDER_STROKE * 2.0).max(0.0),
-            (panel_h - BORDER_STROKE * 2.0).max(0.0),
-            window_bg,
+            panel_x + panel_w - BORDER_STROKE,
+            panel_y,
+            BORDER_STROKE,
+            panel_h,
+            border,
             DEPTH_BG,
-            (BORDER_RADIUS - BORDER_STROKE).max(0.0),
             ORDER,
         );
 
@@ -700,15 +709,14 @@ mod tests {
     #[test]
     fn lock_and_preedit_reset_blink() {
         let mut bar = InputBar::new(true);
-        assert!(bar.next_wake_in().is_some(), "unlocked: caret blinks");
+        assert!(!bar.is_locked());
         bar.set_locked(true);
-        assert!(bar.next_wake_in().is_none(), "locked: nothing to animate");
+        assert!(bar.is_locked());
         bar.set_locked(false);
-        assert!(bar.next_wake_in().is_some());
+        assert!(!bar.is_locked());
 
         bar.set_preedit(Some("中".to_string()));
         assert!(bar.has_preedit());
-        assert!(bar.next_wake_in().is_some());
         bar.set_preedit(None);
         assert!(!bar.has_preedit());
     }

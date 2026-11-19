@@ -154,7 +154,6 @@ impl Screen<'_> {
             config.window.macos_use_unified_titlebar,
         );
 
-        let padding_y_bottom = config.margin.bottom;
         let sugarloaf_layout =
             RootStyle::new(scale as f32, config.fonts.size, config.line_height);
 
@@ -5013,12 +5012,17 @@ impl Screen<'_> {
                 .schedule_render_on_route(wake_in.as_millis() as u64);
         }
 
-        // Input bar caret blink: wake at the next visibility flip.
-        if self.renderer.is_window_focused {
-            if let Some(wake_in) = self.renderer.input_bar.next_wake_in() {
-                self.context_manager
-                    .schedule_render_on_route(wake_in.as_millis() as u64);
-            }
+        // Input bar caret blink rides the terminal-cursor blink channel
+        // (BlinkCursor → CursorBlinkingChangeOnRoute). Unlike
+        // schedule_render_on_route, whose RenderRoute event is only
+        // honored by the event-based strategy, this wake fires under
+        // every renderer strategy; each fired render re-arms it here.
+        if self.renderer.is_window_focused
+            && self.renderer.input_bar.is_enabled()
+            && !self.renderer.input_bar.is_locked()
+        {
+            self.context_manager
+                .blink_cursor(crate::renderer::input_bar::CARET_BLINK_MS as u64);
         }
 
         // In case the configuration of blinking cursor is enabled
