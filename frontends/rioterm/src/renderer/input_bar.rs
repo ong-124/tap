@@ -36,6 +36,8 @@ const PROMPT_GAP: f32 = 10.0;
 const MIN_BAR_HEIGHT: f32 = 24.0;
 
 const CARET_WIDTH: f32 = 2.0;
+/// Horizontal gap between entries in the Tab-completion candidates row.
+const CANDIDATE_GAP: f32 = 14.0;
 /// Blink period shared by the render-time phase math and the wake the
 /// Screen re-arms after every frame.
 pub const CARET_BLINK_MS: u128 = 500;
@@ -92,7 +94,31 @@ pub struct InputBar {
     /// The live line, stashed while previewing history.
     draft: String,
     preedit: Option<String>,
+    /// Ghost suggestion (zsh-autosuggestions style): the suffix of the
+    /// most recent history entry matching the buffer as a prefix,
+    /// rendered dim after the caret and accepted with → / End.
+    suggestion: Option<String>,
+    /// Live Tab-completion cycle state; kept only while the word under
+    /// the cursor is still the one this state last produced.
+    completion: Option<CompletionState>,
+    /// `[input-bar] record-history` — persist submitted lines.
+    record_history: bool,
+    /// `[input-bar] suggestions` — ghost-text suggestions on/off.
+    suggestions: bool,
     caret_blink_start: Instant,
+}
+
+/// Tab-completion cycle: the word region it owns, the word currently
+/// in the buffer, the candidate list and which candidate applies on
+/// the next Tab press.
+struct CompletionState {
+    /// Char index where the completed word begins.
+    word_start: usize,
+    /// Word text currently in the buffer (LCP or last candidate).
+    current: String,
+    candidates: Vec<crate::completion::Candidate>,
+    /// Candidate applied when Tab cycles next.
+    index: usize,
 }
 
 impl Default for InputBar {
@@ -112,6 +138,10 @@ impl Default for InputBar {
             history_pos: None,
             draft: String::new(),
             preedit: None,
+            suggestion: None,
+            completion: None,
+            record_history: true,
+            suggestions: true,
             caret_blink_start: Instant::now(),
         }
     }
@@ -209,12 +239,17 @@ impl InputBar {
         self.resolve_height(window.height / scale);
     }
 
-    /// Update the lock state from the focused pane's zone. Unlocking
-    /// restarts the blink so the caret is immediately visible again.
+    /// Update the lock state from the focused pane's zone. Locking
+    /// drops suggestion/completion state (a half-composed suggestion
+    /// no longer matches the prompt on return); unlocking restarts the
+    /// blink so the caret is immediately visible again.
     pub fn set_locked(&mut self, locked: bool) {
         if self.locked != locked {
             self.locked = locked;
-            if !locked {
+            if locked {
+                self.suggestion = None;
+                self.completion = None;
+            } else {
                 self.caret_blink_start = Instant::now();
             }
         }
@@ -236,7 +271,172 @@ impl InputBar {
             // Keep the caret solid while composing, like the terminal
             // cursor during preedit.
             self.caret_blink_start = Instant::now();
+            self.invalidate_completion();
+            self.refresh_suggestion();
         }
+    }
+
+    /// Replace the browsable history (startup load of the persistent
+    /// store). Any in-flight browse resets to the live line.
+    pub fn set_history(&mut self, history: Vec<String>) {
+        self.history = history;
+        self.history_pos = None;
+        self.draft.clear();
+        self.invalidate_completion();
+        self.refresh_suggestion();
+    }
+
+    /// `[input-bar] record-history` / `suggestions`.
+    pub fn set_options(&mut self, record_history: bool, suggestions: bool) {
+        self.record_history = record_history;
+        self.suggestions = suggestions;
+        self.invalidate_completion();
+        self.refresh_suggestion();
+    }
+
+    /// Whether submissions should reach the persistent store.
+    #[inline]
+    pub fn records_history(&self) -> bool {
+        self.record_history
+    }
+
+    /// Whether the last submit actually entered the history list
+    /// (adjacent dedup may have skipped it); the caller uses this to
+    /// keep the persistent store in lockstep.
+    #[inline]
+    pub fn last_history_is(&self, line: &str) -> bool {
+        self.history.last().map(String::as_str) == Some(line)
+    }
+
+    fn invalidate_completion(&mut self) {
+        self.completion = None;
+    }
+
+    /// Recompute the ghost suggestion from the tail of the history:
+    /// most recent entry matching the buffer as a prefix wins. Only
+    /// meaningful at end-of-line, outside composition and history
+    /// browsing — otherwise `None`.
+    fn refresh_suggestion(&mut self) {
+        let suffix = if self.suggestions
+            && self.preedit.is_none()
+            && self.history_pos.is_none()
+            && self.cursor == self.char_count()
+            && !self.buffer.is_empty()
+        {
+            let buffer = self.buffer.clone();
+            self.history
+                .iter()
+                .rev()
+                .find(|entry| entry.starts_with(&buffer) && entry.as_str() != buffer)
+                .map(|entry| entry[buffer.len()..].to_string())
+        } else {
+            None
+        };
+        self.suggestion = suffix;
+    }
+
+    /// → / End at end-of-line: append the ghost suffix. Returns
+    /// whether a suggestion was consumed; the caller falls back to the
+    /// plain cursor movement otherwise.
+    pub fn accept_suggestion(&mut self) -> bool {
+        let Some(suggestion) = self.suggestion.take() else {
+            return false;
+        };
+        self.fork_from_history();
+        self.buffer.push_str(&suggestion);
+        self.cursor = self.char_count();
+        self.view_start = 0;
+        self.invalidate_completion();
+        self.refresh_suggestion();
+        true
+    }
+
+    /// Tab: complete the word before the cursor. First press inserts
+    /// the common prefix (or the single candidate plus a `/` dir /
+    /// space suffix); further presses on an unchanged word cycle the
+    /// full candidates. An empty word or no matches consumes the key
+    /// without acting.
+    pub fn tab_complete(&mut self, sources: &crate::completion::Sources) {
+        if self.preedit.is_some() {
+            return;
+        }
+
+        let (word_start, word) = self.word_before_cursor();
+
+        // Cycle: same word start and same word text as the live state.
+        if let Some(state) = self.completion.take() {
+            if state.word_start == word_start
+                && state.current == word
+                && !state.candidates.is_empty()
+            {
+                let candidate = &state.candidates[state.index];
+                let insert = candidate.insert.clone();
+                self.apply_word(word_start, &insert);
+                self.completion = Some(CompletionState {
+                    index: (state.index + 1) % state.candidates.len(),
+                    current: insert,
+                    ..state
+                });
+                self.refresh_suggestion();
+                return;
+            }
+            // Stale state: dropped, a fresh completion runs below.
+        }
+
+        if word.is_empty() {
+            return;
+        }
+
+        let candidates = crate::completion::gather(word_start, &word, sources);
+        match candidates.len() {
+            0 => {}
+            1 => {
+                let mut insert = candidates[0].insert.clone();
+                if !candidates[0].is_dir {
+                    insert.push(' ');
+                }
+                self.apply_word(word_start, &insert);
+                self.refresh_suggestion();
+            }
+            _ => {
+                let inserts: Vec<&str> =
+                    candidates.iter().map(|c| c.insert.as_str()).collect();
+                let prefix = crate::completion::common_prefix(&inserts);
+                if prefix.chars().count() > word.chars().count() {
+                    self.apply_word(word_start, &prefix);
+                }
+                self.completion = Some(CompletionState {
+                    word_start,
+                    current: prefix,
+                    candidates,
+                    index: 0,
+                });
+                self.refresh_suggestion();
+            }
+        }
+    }
+
+    /// Replace `[word_start, cursor)` with `word`, cursor ending at
+    /// the word's end.
+    fn apply_word(&mut self, word_start: usize, word: &str) {
+        self.fork_from_history();
+        let from = self.byte_index(word_start);
+        let to = self.byte_index(self.cursor);
+        self.buffer.replace_range(from..to, word);
+        self.cursor = word_start + word.chars().count();
+        self.view_start = 0;
+    }
+
+    /// The whitespace-delimited word ending at the cursor: its first
+    /// char index and text. Empty when the cursor sits at a word start.
+    fn word_before_cursor(&self) -> (usize, String) {
+        let chars: Vec<char> = self.buffer.chars().collect();
+        let cursor = self.cursor.min(chars.len());
+        let mut start = cursor;
+        while start > 0 && !chars[start - 1].is_whitespace() {
+            start -= 1;
+        }
+        (start, chars[start..cursor].iter().collect())
     }
 
     fn char_count(&self) -> usize {
@@ -266,6 +466,8 @@ impl InputBar {
         self.history_pos = None;
         self.draft.clear();
         self.preedit = None;
+        self.invalidate_completion();
+        self.refresh_suggestion();
         self.caret_blink_start = Instant::now();
     }
 
@@ -292,6 +494,8 @@ impl InputBar {
         let byte = self.byte_index(self.cursor);
         self.buffer.insert_str(byte, &sanitized);
         self.cursor += sanitized.chars().count();
+        self.invalidate_completion();
+        self.refresh_suggestion();
     }
 
     pub fn backspace(&mut self) {
@@ -303,6 +507,8 @@ impl InputBar {
         let end = self.byte_index(self.cursor);
         self.buffer.drain(start..end);
         self.cursor -= 1;
+        self.invalidate_completion();
+        self.refresh_suggestion();
     }
 
     pub fn delete_forward(&mut self) {
@@ -313,6 +519,8 @@ impl InputBar {
         let start = self.byte_index(self.cursor);
         let end = self.byte_index(self.cursor + 1);
         self.buffer.drain(start..end);
+        self.invalidate_completion();
+        self.refresh_suggestion();
     }
 
     /// Ctrl+W: bash-style rubout — kill backwards the word before the
@@ -340,6 +548,8 @@ impl InputBar {
         let to = self.byte_index(self.cursor);
         self.buffer.drain(from..to);
         self.cursor = start;
+        self.invalidate_completion();
+        self.refresh_suggestion();
     }
 
     /// Ctrl+U: delete from the line start to the cursor.
@@ -352,22 +562,32 @@ impl InputBar {
         self.buffer.drain(..end);
         self.cursor = 0;
         self.view_start = 0;
+        self.invalidate_completion();
+        self.refresh_suggestion();
     }
 
     pub fn move_left(&mut self) {
         self.cursor = self.cursor.saturating_sub(1);
+        self.invalidate_completion();
+        self.refresh_suggestion();
     }
 
     pub fn move_right(&mut self) {
         self.cursor = (self.cursor + 1).min(self.char_count());
+        self.invalidate_completion();
+        self.refresh_suggestion();
     }
 
     pub fn move_home(&mut self) {
         self.cursor = 0;
+        self.invalidate_completion();
+        self.refresh_suggestion();
     }
 
     pub fn move_end(&mut self) {
         self.cursor = self.char_count();
+        self.invalidate_completion();
+        self.refresh_suggestion();
     }
 
     pub fn history_previous(&mut self) {
@@ -398,6 +618,8 @@ impl InputBar {
             self.buffer = self.draft.clone();
             self.cursor = self.char_count();
             self.view_start = 0;
+            self.invalidate_completion();
+            self.refresh_suggestion();
         }
     }
 
@@ -405,6 +627,8 @@ impl InputBar {
         self.buffer = self.history[pos].clone();
         self.cursor = self.char_count();
         self.view_start = 0;
+        self.invalidate_completion();
+        self.refresh_suggestion();
     }
 
     /// Hand the composed line to the caller, record it in history
@@ -423,6 +647,8 @@ impl InputBar {
         self.history_pos = None;
         self.draft.clear();
         self.preedit = None;
+        self.invalidate_completion();
+        self.refresh_suggestion();
         self.caret_blink_start = Instant::now();
         line
     }
@@ -502,6 +728,64 @@ impl InputBar {
             return;
         }
 
+        // Tab-completion candidates row above the main line: dim
+        // entries with the cycled one in full colour, which is always
+        // included (the row starts far enough back to fit it).
+        if let Some(state) = &self.completion {
+            if !state.candidates.is_empty() {
+                let cand_font = font_size * 0.5;
+                let row_y = text_y - cand_font - 6.0;
+                if row_y >= panel_y + border_width + 4.0 {
+                    let max_row_width = (content_right - content_x).max(0.0);
+                    let mut measure_candidate = |text: &str, color: [f32; 4]| -> f32 {
+                        let opts = DrawOpts {
+                            font_size: cand_font,
+                            color: color_u8(color),
+                            ..DrawOpts::default()
+                        };
+                        sugarloaf.text_mut().measure(text, &opts)
+                    };
+                    let widths: Vec<f32> = state
+                        .candidates
+                        .iter()
+                        .map(|c| measure_candidate(&c.display, TEXT_COLOR))
+                        .collect();
+                    // Walk back from the highlighted candidate while
+                    // the older ones still fit alongside it.
+                    let mut start = state.index.min(widths.len() - 1);
+                    let mut total = widths[start];
+                    while start > 0
+                        && total + CANDIDATE_GAP + widths[start - 1] <= max_row_width
+                    {
+                        total += CANDIDATE_GAP + widths[start - 1];
+                        start -= 1;
+                    }
+                    let mut x = content_x;
+                    for (i, candidate) in state.candidates.iter().enumerate().skip(start)
+                    {
+                        let color = if i == state.index {
+                            TEXT_COLOR
+                        } else {
+                            DIM_TEXT_COLOR
+                        };
+                        let opts = DrawOpts {
+                            font_size: cand_font,
+                            color: color_u8(color),
+                            ..DrawOpts::default()
+                        };
+                        let width = widths[i];
+                        if x + width > content_right {
+                            break;
+                        }
+                        sugarloaf
+                            .text_mut()
+                            .draw(x, row_y, &candidate.display, &opts);
+                        x += width + CANDIDATE_GAP;
+                    }
+                }
+            }
+        }
+
         // Prompt symbol.
         let prompt_opts = DrawOpts {
             font_size,
@@ -527,16 +811,36 @@ impl InputBar {
             color: color_u8(PREEDIT_TEXT_COLOR),
             ..DrawOpts::default()
         };
+        let suggestion_opts = DrawOpts {
+            font_size,
+            color: color_u8(DIM_TEXT_COLOR),
+            ..DrawOpts::default()
+        };
         let preedit = self.preedit.clone().unwrap_or_default();
         let preedit_width = if preedit.is_empty() {
             0.0
         } else {
             sugarloaf.text_mut().measure(&preedit, &preedit_opts)
         };
+        // Ghost suggestion: mutually exclusive with preedit (it is
+        // suppressed while composing).
+        let suggestion = if self.preedit.is_none() {
+            self.suggestion.clone().unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let suggestion_width = if suggestion.is_empty() {
+            0.0
+        } else {
+            sugarloaf.text_mut().measure(&suggestion, &suggestion_opts)
+        };
 
         let chars: Vec<char> = self.buffer.chars().collect();
-        // The composition text sits at the caret; keep room for it.
-        let budget = max_text_width - preedit_width.min(max_text_width);
+        // The composition text sits at the caret; keep room for it and
+        // for the ghost suffix (they are mutually exclusive).
+        let budget = max_text_width
+            - preedit_width.min(max_text_width)
+            - suggestion_width.min(max_text_width);
 
         // Advance view_start so the text before the cursor fits
         // (binary search: width shrinks monotonically as start grows).
@@ -593,6 +897,14 @@ impl InputBar {
                 ORDER,
             );
             caret_x += preedit_width;
+        }
+
+        // Ghost suggestion right after the caret (dim); the caret bar
+        // overlaps its first pixels, exactly like zsh-autosuggestions.
+        if !suggestion.is_empty() {
+            sugarloaf
+                .text_mut()
+                .draw(caret_x, text_y, &suggestion, &suggestion_opts);
         }
         caret_x = caret_x.min(text_x + budget);
 
@@ -823,5 +1135,249 @@ mod tests {
         let (x, w) = bar.panel_geometry(1000.0);
         assert_eq!(x, PANEL_INSET_X);
         assert_eq!(w, 1000.0 - PANEL_INSET_X * 2.0);
+    }
+
+    // ---- persistent history & ghost suggestions ----
+
+    fn bar_with_history(entries: &[&str]) -> InputBar {
+        let mut bar = InputBar::new(true);
+        bar.set_history(entries.iter().map(|s| s.to_string()).collect());
+        bar
+    }
+
+    #[test]
+    fn loaded_history_browses_with_draft_fork() {
+        let mut bar = bar_with_history(&["old-first", "second", "third"]);
+        bar.insert_text("draft");
+        bar.history_previous();
+        assert_eq!(bar.buffer, "third");
+        bar.history_previous();
+        assert_eq!(bar.buffer, "second");
+        bar.history_next();
+        assert_eq!(bar.buffer, "third");
+        bar.history_next();
+        assert_eq!(bar.buffer, "draft", "back down to the live line");
+    }
+
+    #[test]
+    fn suggestion_appears_dismisses_and_accepts() {
+        let mut bar = bar_with_history(&["cargo build --release", "cargo test", "ls"]);
+
+        bar.insert_text("cargo ");
+        assert_eq!(
+            bar.suggestion.as_deref(),
+            Some("test"),
+            "the most recent match wins"
+        );
+
+        // Off end-of-line it disappears, back at the end it returns.
+        bar.move_left();
+        assert_eq!(bar.suggestion, None);
+        bar.move_end();
+        assert_eq!(bar.suggestion.as_deref(), Some("test"));
+
+        // → takes the whole suffix; nothing equals the buffer remains.
+        assert!(bar.accept_suggestion());
+        assert_eq!(bar.buffer, "cargo test");
+        assert_eq!(bar.suggestion, None);
+        assert_eq!(bar.cursor, bar.char_count());
+    }
+
+    #[test]
+    fn suggestion_suppressed_while_composing_or_disabled() {
+        let mut bar = bar_with_history(&["echo hi"]);
+        bar.insert_text("ec");
+        assert_eq!(bar.suggestion.as_deref(), Some("ho hi"));
+
+        bar.set_preedit(Some("中".to_string()));
+        assert_eq!(bar.suggestion, None, "no ghost during composition");
+        bar.set_preedit(None);
+        assert_eq!(bar.suggestion.as_deref(), Some("ho hi"));
+
+        bar.set_options(true, false);
+        assert_eq!(bar.suggestion, None, "config switch off");
+        assert!(bar.records_history());
+        bar.set_options(false, true);
+        assert!(!bar.records_history());
+        assert_eq!(bar.suggestion.as_deref(), Some("ho hi"));
+    }
+
+    #[test]
+    fn exact_match_produces_no_suggestion() {
+        let mut bar = bar_with_history(&["git status"]);
+        bar.insert_text("git status");
+        assert_eq!(bar.suggestion, None, "buffer already equals the entry");
+    }
+
+    #[test]
+    fn submit_reports_whether_history_took_the_line() {
+        let mut bar = InputBar::new(true);
+        bar.insert_text("dup");
+        assert_eq!(bar.take_submitted_line(), "dup");
+        assert!(bar.last_history_is("dup"));
+
+        // Adjacent duplicate: skipped in memory, and the caller sees
+        // the same "last" so the store stays deduped too.
+        bar.insert_text("dup");
+        assert_eq!(bar.take_submitted_line(), "dup");
+        assert!(bar.last_history_is("dup"));
+
+        bar.insert_text("other");
+        assert_eq!(bar.take_submitted_line(), "other");
+        assert!(!bar.last_history_is("dup"));
+        assert!(bar.last_history_is("other"));
+    }
+
+    // ---- Tab completion ----
+
+    /// Scoped temp dir for completion fixtures (no tempfile dep).
+    struct TempDirGuard(std::path::PathBuf);
+
+    impl TempDirGuard {
+        fn new(tag: &str) -> Self {
+            static COUNTER: std::sync::atomic::AtomicU32 =
+                std::sync::atomic::AtomicU32::new(0);
+            let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = std::env::temp_dir()
+                .join(format!("tap-inputbar-{}-{n}-{tag}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+
+        fn sources(&self, cwd: Option<std::path::PathBuf>) -> crate::completion::Sources {
+            crate::completion::Sources {
+                path_dirs: vec![self.0.clone()],
+                home: None,
+                cwd,
+            }
+        }
+    }
+
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn write_exec(dir: &std::path::Path, name: &str) {
+        std::fs::write(dir.join(name), "").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                dir.join(name),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn tab_unique_command_gets_a_trailing_space() {
+        let dir = TempDirGuard::new("cmd");
+        write_exec(dir.path(), "hello");
+        let sources = dir.sources(None);
+
+        let mut bar = InputBar::new(true);
+        bar.insert_text("hel");
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "hello ");
+        assert_eq!(bar.cursor, bar.char_count());
+        assert!(bar.completion.is_none(), "unique match leaves no cycle");
+
+        // A second Tab on the trailing space: empty word, consumed
+        // without action.
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "hello ");
+    }
+
+    #[test]
+    fn tab_cycles_candidates_after_common_prefix() {
+        let dir = TempDirGuard::new("cycle");
+        write_exec(dir.path(), "foobar");
+        write_exec(dir.path(), "foobar2");
+        let sources = dir.sources(None);
+
+        let mut bar = InputBar::new(true);
+        bar.insert_text("foo");
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "foobar", "first Tab completes the LCP");
+        assert!(bar.completion.is_some());
+
+        // Further Tabs walk the sorted candidates; the LCP word is a
+        // real candidate, so it comes around first.
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "foobar");
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "foobar2");
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "foobar", "wraps around");
+
+        // Any edit invalidates the cycle state.
+        bar.backspace();
+        assert!(bar.completion.is_none());
+    }
+
+    #[test]
+    fn tab_completes_paths_against_the_cwd() {
+        let dir = TempDirGuard::new("paths");
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src").join("main.rs"), "").unwrap();
+        std::fs::write(dir.path().join("readme"), "").unwrap();
+        let sources = dir.sources(Some(dir.path().to_path_buf()));
+
+        let mut bar = InputBar::new(true);
+        // A bare first word would be command mode; `./` forces path
+        // mode. Unique dir: the slash lands in the buffer, no space.
+        bar.insert_text("./s");
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "./src/");
+
+        // Descend: type the file prefix and complete the file.
+        bar.insert_text("m");
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "./src/main.rs ");
+    }
+
+    #[test]
+    fn tab_survives_multibyte_words() {
+        let dir = TempDirGuard::new("multibyte");
+        std::fs::create_dir(dir.path().join("中文目录")).unwrap();
+        std::fs::write(dir.path().join("中文文件"), "").unwrap();
+        let sources = dir.sources(Some(dir.path().to_path_buf()));
+
+        let mut bar = InputBar::new(true);
+        bar.insert_text("./中");
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "./中文", "LCP past the typed char");
+
+        // Cycle: byte-sorted inserts put 文件 before 目录.
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "./中文文件");
+    }
+
+    #[test]
+    fn tab_with_no_matches_is_a_consumed_noop() {
+        let dir = TempDirGuard::new("nomatch");
+        write_exec(dir.path(), "hello");
+        let sources = dir.sources(None);
+
+        let mut bar = InputBar::new(true);
+        bar.insert_text("zzz");
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "zzz");
+        assert!(bar.completion.is_none());
+
+        // First word only: a slash word is path mode even at position 0.
+        bar.buffer.clear();
+        bar.cursor = 0;
+        bar.insert_text("no/suchpath");
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "no/suchpath");
     }
 }

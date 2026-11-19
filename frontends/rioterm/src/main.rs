@@ -7,11 +7,13 @@
 mod application;
 mod bindings;
 mod cli;
+mod completion;
 mod constants;
 mod context;
 mod global_hotkey;
 mod hints;
 mod ime;
+mod input_history;
 mod layout;
 mod messenger;
 mod mouse;

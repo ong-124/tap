@@ -1,3 +1,4 @@
+use crate::config::defaults::default_bool_true;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 /// A size that accepts either pixels (a bare number, logical px) or a
@@ -70,6 +71,15 @@ pub struct InputBarConfig {
     pub width: SizeSpec,
     #[serde(default)]
     pub height: Option<SizeSpec>,
+    /// Record every line submitted through the bar into the persistent
+    /// `input-history` store (ts + cwd per entry, for recall and future
+    /// classification).
+    #[serde(default = "default_bool_true", rename = "record-history")]
+    pub record_history: bool,
+    /// Ghost-text completion (zsh-autosuggestions style): dim suffix
+    /// after the caret, accepted with → / End.
+    #[serde(default = "default_bool_true")]
+    pub suggestions: bool,
 }
 
 impl Default for InputBarConfig {
@@ -77,6 +87,8 @@ impl Default for InputBarConfig {
         Self {
             width: default_width(),
             height: None,
+            record_history: default_bool_true(),
+            suggestions: default_bool_true(),
         }
     }
 }
@@ -147,5 +159,23 @@ mod tests {
             "#
         )
         .is_err());
+    }
+
+    #[test]
+    fn history_keys_default_on_and_parse_off() {
+        let config = toml::from_str::<Config>("[input_bar]").unwrap();
+        assert!(config.input_bar.record_history);
+        assert!(config.input_bar.suggestions);
+
+        let config = toml::from_str::<Config>(
+            r#"
+            [input_bar]
+            record-history = false
+            suggestions = false
+            "#,
+        )
+        .unwrap();
+        assert!(!config.input_bar.record_history);
+        assert!(!config.input_bar.suggestions);
     }
 }

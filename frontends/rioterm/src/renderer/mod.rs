@@ -349,6 +349,10 @@ impl Renderer {
             input_bar: {
                 let mut bar = input_bar::InputBar::new(config.enable_input_bar);
                 bar.set_size(config.input_bar.width, config.input_bar.height);
+                bar.set_options(
+                    config.input_bar.record_history,
+                    config.input_bar.suggestions,
+                );
                 bar
             },
             border_width: config.panel.border_width,

@@ -238,6 +238,12 @@ impl Screen<'_> {
             config.fonts.size,
             config.line_height,
         );
+        // Seed the bar's browsable history from the persistent store
+        // (once per window; submissions append to the store directly).
+        renderer.input_bar.set_history(crate::input_history::load(
+            &crate::input_history::store_path(),
+            crate::input_history::MAX_ENTRIES,
+        ));
         let padding_y_bottom = config.margin.bottom + renderer.input_bar.height();
 
         let bindings = crate::bindings::default_key_bindings(config);
@@ -580,6 +586,10 @@ impl Screen<'_> {
         self.renderer.is_window_focused = was_focused;
         old_input_bar.set_enabled(config.enable_input_bar);
         old_input_bar.set_size(config.input_bar.width, config.input_bar.height);
+        old_input_bar.set_options(
+            config.input_bar.record_history,
+            config.input_bar.suggestions,
+        );
         self.renderer.input_bar = old_input_bar;
         // Bar size follows the (possibly new) font metrics, and the
         // margin below uses the refreshed height.
@@ -1127,16 +1137,32 @@ impl Screen<'_> {
                     self.renderer.input_bar.move_left();
                     return true;
                 }
+                // Right at end-of-line accepts the ghost suggestion
+                // first; otherwise it just moves the caret.
                 Key::Named(NamedKey::ArrowRight) => {
-                    self.renderer.input_bar.move_right();
+                    if !self.renderer.input_bar.accept_suggestion() {
+                        self.renderer.input_bar.move_right();
+                    }
                     return true;
                 }
                 Key::Named(NamedKey::Home) => {
                     self.renderer.input_bar.move_home();
                     return true;
                 }
+                // End accepts the ghost suggestion when one is up
+                // (zsh-autosuggestions semantics); plain jump otherwise.
                 Key::Named(NamedKey::End) => {
-                    self.renderer.input_bar.move_end();
+                    if !self.renderer.input_bar.accept_suggestion() {
+                        self.renderer.input_bar.move_end();
+                    }
+                    return true;
+                }
+                // Whole-line Tab completion: command words against
+                // PATH, everything else against the focused pane's
+                // cwd. Always consumed — never leaked to the PTY
+                // (Shift+Tab arrives as BackTab and stays passthrough).
+                Key::Named(NamedKey::Tab) => {
+                    self.input_bar_tab_complete();
                     return true;
                 }
                 // History browsing, like every readline.
@@ -1192,13 +1218,54 @@ impl Screen<'_> {
         false
     }
 
+    /// Build the completion environment (PATH from tap, home, and the
+    /// focused pane's cwd) and run a Tab press through the bar.
+    fn input_bar_tab_complete(&mut self) {
+        #[cfg(not(target_os = "windows"))]
+        let cwd = {
+            let current = self.context_manager.current();
+            teletypewriter::foreground_process_path(*current.main_fd, current.shell_pid)
+                .ok()
+        };
+        #[cfg(target_os = "windows")]
+        let cwd = None;
+
+        let sources = crate::completion::Sources::from_env(cwd);
+        self.renderer.input_bar.tab_complete(&sources);
+    }
+
     /// Hand the composed line to the focused pane's PTY as if it had
-    /// been typed: the full line plus a carriage return.
+    /// been typed: the full line plus a carriage return. When the bar
+    /// records history, the line lands in the persistent store — after
+    /// the close check, so a pane that just exited never records an
+    /// unsent line.
     fn submit_input_bar_line(&mut self) {
+        #[cfg(not(target_os = "windows"))]
+        let cwd = {
+            let current = self.context_manager.current();
+            teletypewriter::foreground_process_path(*current.main_fd, current.shell_pid)
+                .unwrap_or_default()
+        };
+        #[cfg(target_os = "windows")]
+        let cwd = std::string::String::new();
+
         let line = self.renderer.input_bar.take_submitted_line();
+        let should_record = self.renderer.input_bar.records_history()
+            && self.renderer.input_bar.last_history_is(&line);
         if self.context_manager.close_if_exited() {
             return;
         }
+        if should_record && !line.is_empty() {
+            crate::input_history::append(
+                &crate::input_history::store_path(),
+                &crate::input_history::Entry {
+                    ts: crate::input_history::now_ts(),
+                    cwd: cwd.to_string_lossy().into_owned(),
+                    line: line.clone(),
+                },
+            );
+        }
+
         self.scroll_bottom_when_cursor_not_visible();
         self.clear_selection();
 
