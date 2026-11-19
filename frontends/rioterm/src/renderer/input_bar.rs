@@ -28,7 +28,6 @@ pub const INPUT_FONT_SCALE: f32 = 2.0;
 
 const PANEL_INSET_X: f32 = 8.0;
 const PANEL_INSET_Y: f32 = 4.0;
-const BORDER_STROKE: f32 = 4.0;
 const TEXT_PADDING_X: f32 = 12.0;
 const PROMPT_GAP: f32 = 10.0;
 
@@ -45,9 +44,10 @@ const PROMPT_SYMBOL: &str = "\u{276F}";
 const LOCKED_HINT: &str = "keys pass through";
 
 // Colors. The panel itself shares the window background; only the
-// thick border ring is the bar's own paint.
-const BORDER_COLOR: [f32; 4] = [0.85, 0.85, 0.85, 0.32];
-const LOCKED_BORDER_COLOR: [f32; 4] = [0.55, 0.55, 0.55, 0.14];
+// thick border ring is the bar's own paint. Shared with the pane
+// frames (focused pane / unlocked bar = strong, rest = dim).
+pub(crate) const BORDER_COLOR: [f32; 4] = [0.85, 0.85, 0.85, 0.32];
+pub(crate) const LOCKED_BORDER_COLOR: [f32; 4] = [0.55, 0.55, 0.55, 0.14];
 const TEXT_COLOR: [f32; 4] = [0.93, 0.93, 0.93, 1.0];
 const DIM_TEXT_COLOR: [f32; 4] = [0.50, 0.50, 0.50, 1.0];
 const PROMPT_COLOR: [f32; 4] = [0.42, 0.78, 0.42, 1.0];
@@ -374,7 +374,13 @@ impl InputBar {
         self.locked
     }
 
-    pub fn render(&mut self, sugarloaf: &mut Sugarloaf, dimensions: (f32, f32, f32)) {
+    pub fn render(
+        &mut self,
+        sugarloaf: &mut Sugarloaf,
+        dimensions: (f32, f32, f32),
+        border_width: f32,
+        border_radius: f32,
+    ) {
         if !self.enabled || self.height_px <= 0.0 || self.font_size <= 0.0 {
             // Immediate mode: not drawing == not visible.
             return;
@@ -387,8 +393,7 @@ impl InputBar {
         // Framed panel floating inside the reserved band. The center
         // stays fully transparent — the window background (or image)
         // shows through and the bar's own paint is only the thick
-        // translucent border, drawn as four edge rects since a filled
-        // ring cannot punch a hole through to what is behind.
+        // translucent rounded border.
         let panel_x = PANEL_INSET_X;
         let panel_y = logical_height - self.height_px + PANEL_INSET_Y;
         let panel_w = (logical_width - PANEL_INSET_X * 2.0).max(0.0);
@@ -399,42 +404,14 @@ impl InputBar {
         } else {
             BORDER_COLOR
         };
-        sugarloaf.rect(
-            None,
+        crate::renderer::draw_rounded_frame(
+            sugarloaf,
             panel_x,
             panel_y,
             panel_w,
-            BORDER_STROKE,
-            border,
-            DEPTH_BG,
-            ORDER,
-        );
-        sugarloaf.rect(
-            None,
-            panel_x,
-            panel_y + panel_h - BORDER_STROKE,
-            panel_w,
-            BORDER_STROKE,
-            border,
-            DEPTH_BG,
-            ORDER,
-        );
-        sugarloaf.rect(
-            None,
-            panel_x,
-            panel_y,
-            BORDER_STROKE,
             panel_h,
-            border,
-            DEPTH_BG,
-            ORDER,
-        );
-        sugarloaf.rect(
-            None,
-            panel_x + panel_w - BORDER_STROKE,
-            panel_y,
-            BORDER_STROKE,
-            panel_h,
+            border_width,
+            border_radius,
             border,
             DEPTH_BG,
             ORDER,
@@ -442,8 +419,8 @@ impl InputBar {
 
         let font_size = self.font_size;
         let text_y = panel_y + (panel_h - font_size) / 2.0;
-        let content_x = panel_x + BORDER_STROKE + TEXT_PADDING_X;
-        let content_right = panel_x + panel_w - BORDER_STROKE - TEXT_PADDING_X;
+        let content_x = panel_x + border_width + TEXT_PADDING_X;
+        let content_right = panel_x + panel_w - border_width - TEXT_PADDING_X;
 
         // Locked: only the hint that keys go to the terminal.
         if self.locked {

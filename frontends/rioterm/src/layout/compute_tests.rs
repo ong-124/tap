@@ -1313,43 +1313,9 @@ mod grid {
     }
 
     #[test]
-    fn separators_sit_between_the_panes() {
-        let mut grid = grid(1.0);
-        let left = grid.current;
-        let right = split(&mut grid, true);
-        let (_, avail_h) = available(&grid);
-        let borders = grid.get_panel_borders();
-        assert_eq!(borders.len(), 1);
-        let b = &borders[0];
-        assert_px(b.x + b.width / 2.0, separator_x(&grid, left, right));
-        assert_px(b.y, MARGIN);
-        assert_px(b.height, avail_h - 2.0 * MARGIN);
-
-        // A column inside the right pane adds one horizontal separator
-        // spanning only that pane.
-        let bottom_right = split(&mut grid, false);
-        let borders = grid.get_panel_borders();
-        assert_eq!(borders.len(), 2);
-        let horizontal = borders
-            .iter()
-            .find(|b| b.width > b.height)
-            .expect("a horizontal separator");
-        let r = rect(&grid, right);
-        assert_px(horizontal.x, r[0]);
-        assert_px(horizontal.width, r[2]);
-        let top_end = r[1] + r[3];
-        let bottom_start = rect(&grid, bottom_right)[1];
-        assert_px(
-            horizontal.y + horizontal.height / 2.0,
-            (top_end + bottom_start) / 2.0,
-        );
-    }
-
-    #[test]
-    fn a_single_pane_draws_no_border() {
+    fn a_single_pane_has_no_separator_hit_box() {
         let grid = grid(1.0);
         assert!(!grid.should_draw_borders());
-        assert!(grid.get_panel_borders().is_empty());
         assert!(grid
             .find_border_at_position(WIDTH / 2.0, HEIGHT / 2.0)
             .is_none());
@@ -1374,7 +1340,7 @@ mod grid {
             assert_eq!(hit.direction, BorderDirection::Vertical);
             assert_eq!((hit.left_or_top, hit.right_or_bottom), (left, right));
 
-            let half = (1.0 + 3.0) * scale;
+            let half = (grid.border_config.width / 2.0 + 3.0) * scale;
             assert!(grid.find_border_at_position(x + half - 0.5, y).is_some());
             assert!(grid.find_border_at_position(x + half + 0.5, y).is_none());
             assert!(grid.find_border_at_position(x - half + 0.5, y).is_some());
@@ -1671,7 +1637,6 @@ mod grid {
         assert_eq!(grid.panel_count(), 2);
         assert!(!grid.inner.contains_key(&b));
         assert_px(width(&grid, a) + width(&grid, d), avail - 4.0 * MARGIN);
-        assert_eq!(grid.get_panel_borders().len(), 1);
 
         // Removing the last pane in visual order selects the previous.
         grid.current = d;
@@ -1679,7 +1644,6 @@ mod grid {
         assert_eq!(grid.current, a);
         assert_eq!(grid.panel_count(), 1);
         assert_px(width(&grid, a), avail - 2.0 * MARGIN);
-        assert!(grid.get_panel_borders().is_empty());
     }
 
     // The name is the first pane's route, it stays when that pane goes,

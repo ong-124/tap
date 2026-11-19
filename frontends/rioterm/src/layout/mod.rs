@@ -165,11 +165,6 @@ fn basis_plus(basis: taffy::Dimension, delta: f32) -> taffy::Dimension {
     }
 }
 
-#[inline]
-fn create_border(color: [f32; 4], position: [f32; 2], size: [f32; 2]) -> Rect {
-    Rect::new(position[0], position[1], size[0], size[1], color)
-}
-
 /// Separator configuration for split panels
 #[derive(Debug, Clone, Copy)]
 pub struct BorderConfig {
@@ -615,39 +610,6 @@ impl<T: rio_backend::event::EventListener> ContextGrid<T> {
         }
 
         self.apply_taffy_layout(true);
-    }
-
-    /// Get separator lines between adjacent panels for rendering.
-    pub fn get_panel_borders(&self) -> Vec<Rect> {
-        if !self.should_draw_borders() {
-            return vec![];
-        }
-
-        let mut separators = Vec::new();
-        let border_width = self.border_config.width;
-        let color = self.border_config.color;
-
-        self.walk_separators(|dir, center, span, _child_a, _child_b| -> Option<()> {
-            match dir {
-                BorderDirection::Vertical => {
-                    separators.push(create_border(
-                        color,
-                        [center - border_width / 2.0, span[0]],
-                        [border_width, span[1] - span[0]],
-                    ));
-                }
-                BorderDirection::Horizontal => {
-                    separators.push(create_border(
-                        color,
-                        [span[0], center - border_width / 2.0],
-                        [span[1] - span[0], border_width],
-                    ));
-                }
-            }
-            None // continue walking
-        });
-
-        separators
     }
 
     /// Walk the taffy tree visiting every separator between sibling nodes.

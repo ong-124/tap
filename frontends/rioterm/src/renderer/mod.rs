@@ -79,6 +79,74 @@ pub(crate) fn elide_tail(
     ellipsis(lo)
 }
 
+/// Rounded-rect ring drawn as four edge rects plus four corner arcs.
+/// The center stays unpainted (transparent) — a filled ring cannot
+/// punch through to what is behind, so the frame is assembled from
+/// strokes that all live in the band between the outer and inner
+/// rounded rectangles. Shared by the input bar and the pane frames;
+/// `stroke` and `radius` come from `[panel] border-width` /
+/// `border-radius`. All values are logical pixels.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_rounded_frame(
+    sugarloaf: &mut Sugarloaf,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    stroke: f32,
+    radius: f32,
+    color: [f32; 4],
+    depth: f32,
+    order: u8,
+) {
+    if w <= 0.0 || h <= 0.0 || stroke <= 0.0 {
+        return;
+    }
+    // Outer corner radius clamped to half the shortest side.
+    let radius = radius.clamp(0.0, (w.min(h) / 2.0).max(0.0));
+    // Straight edges, spanning exactly between the corner tangent
+    // points so they join the arc band without overlap or gap.
+    let edge_w = (w - 2.0 * radius).max(0.0);
+    let edge_h = (h - 2.0 * radius).max(0.0);
+    sugarloaf.rect(None, x + radius, y, edge_w, stroke, color, depth, order);
+    sugarloaf.rect(
+        None,
+        x + radius,
+        y + h - stroke,
+        edge_w,
+        stroke,
+        color,
+        depth,
+        order,
+    );
+    sugarloaf.rect(None, x, y + radius, stroke, edge_h, color, depth, order);
+    sugarloaf.rect(
+        None,
+        x + w - stroke,
+        y + radius,
+        stroke,
+        edge_h,
+        color,
+        depth,
+        order,
+    );
+    // Corner arcs: the centerline radius keeps the stroke band inside
+    // [radius - stroke, radius] of the outer rectangle. Angles follow
+    // the arc convention x = cx + r·cos(θ), y = cy + r·sin(θ) with y
+    // growing down: 0° = east, 90° = south, 180° = west, 270° = north.
+    if radius > stroke / 2.0 {
+        let r = radius - stroke / 2.0;
+        let cx_left = x + radius;
+        let cx_right = x + w - radius;
+        let cy_top = y + radius;
+        let cy_bottom = y + h - radius;
+        sugarloaf.arc(cx_left, cy_top, r, 180.0, 270.0, stroke, depth, color);
+        sugarloaf.arc(cx_right, cy_top, r, 270.0, 360.0, stroke, depth, color);
+        sugarloaf.arc(cx_right, cy_bottom, r, 0.0, 90.0, stroke, depth, color);
+        sugarloaf.arc(cx_left, cy_bottom, r, 90.0, 180.0, stroke, depth, color);
+    }
+}
+
 /// Draw the hovered hint's target at the bottom-left, the way a browser
 /// shows a link destination in its status bar.
 ///
@@ -183,6 +251,10 @@ pub struct Renderer {
     pub assistant: assistant::AssistantOverlay,
     pub confirm_quit: confirm_quit::ConfirmQuit,
     pub input_bar: input_bar::InputBar,
+    /// Frame stroke/radius from `[panel]`, shared by the pane frames
+    /// and the input bar so they always match.
+    pub border_width: f32,
+    pub border_radius: f32,
     pub scrollbar: scrollbar::Scrollbar,
     #[allow(unused)]
     pub option_as_alt: String,
@@ -279,6 +351,8 @@ impl Renderer {
             assistant: assistant::AssistantOverlay::default(),
             confirm_quit: confirm_quit::ConfirmQuit::default(),
             input_bar: input_bar::InputBar::new(config.enable_input_bar),
+            border_width: config.panel.border_width,
+            border_radius: config.panel.border_radius,
             scrollbar: scrollbar::Scrollbar::new(config.enable_scroll_bar),
             is_game_mode_enabled: config.renderer.strategy.is_game(),
             custom_mouse_cursor: config.effects.custom_mouse_cursor,
@@ -821,6 +895,8 @@ impl Renderer {
         self.input_bar.render(
             sugarloaf,
             (window_size.width, window_size.height, scale_factor),
+            self.border_width,
+            self.border_radius,
         );
 
         // Render scrollbars for each panel
@@ -841,17 +917,33 @@ impl Renderer {
             );
         }
 
-        // Render panel borders (on top of terminal content). Borders
-        // are flat rects today — the previous `Object` enum
-        // (Rect / Quad / RichText) was only ever populated with the
-        // Rect variant, so the dispatch is direct now.
+        // Pane frames in the input-bar style: a translucent rounded
+        // ring around every panel of the current tab (the focused pane
+        // carries the stronger stroke), drawn on top of terminal
+        // content. Replaces the old flat separator lines between
+        // splits.
         let grid_scaled_margin = context_manager.get_current_grid_scaled_margin();
-        for rect in context_manager.get_panel_borders() {
-            let x = (rect.x + grid_scaled_margin.left) / scale_factor;
-            let y = (rect.y + grid_scaled_margin.top) / scale_factor;
-            let width = rect.width / scale_factor;
-            let height = rect.height / scale_factor;
-            sugarloaf.rect(None, x, y, width, height, rect.color, 0.0, 1);
+        let current_route = context_manager.current().route_id;
+        for item in context_manager.current_grid().contexts().values() {
+            let [px, py, pw, ph] = item.layout_rect;
+            let focused = item.val.route_id == current_route;
+            let color = if focused {
+                input_bar::BORDER_COLOR
+            } else {
+                input_bar::LOCKED_BORDER_COLOR
+            };
+            draw_rounded_frame(
+                sugarloaf,
+                (px + grid_scaled_margin.left) / scale_factor,
+                (py + grid_scaled_margin.top) / scale_factor,
+                pw / scale_factor,
+                ph / scale_factor,
+                self.border_width,
+                self.border_radius,
+                color,
+                0.0,
+                1,
+            );
         }
 
         // Derive the window bg color from the currently-active panel's

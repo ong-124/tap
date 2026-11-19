@@ -52,12 +52,12 @@ fn default_column_gap() -> f32 {
 
 #[inline]
 fn default_border_width() -> f32 {
-    2.0
+    6.0
 }
 
 #[inline]
 fn default_border_radius() -> f32 {
-    0.0
+    10.0
 }
 
 // CSS-like margin structure
@@ -232,8 +232,8 @@ mod tests {
         assert_eq!(panel.margin, Margin::all(2.0));
         assert_eq!(panel.row_gap, 0.0);
         assert_eq!(panel.column_gap, 0.0);
-        assert_eq!(panel.border_width, 2.0);
-        assert_eq!(panel.border_radius, 0.0);
+        assert_eq!(panel.border_width, 6.0);
+        assert_eq!(panel.border_radius, 10.0);
     }
 
     #[test]

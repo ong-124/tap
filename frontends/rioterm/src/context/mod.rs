@@ -1301,11 +1301,6 @@ impl<T: EventListener + Clone + std::marker::Send + 'static> ContextManager<T> {
     }
 
     #[inline]
-    pub fn get_panel_borders(&self) -> Vec<Rect> {
-        self.contexts[self.current_index].get_panel_borders()
-    }
-
-    #[inline]
     pub fn get_current_grid_scaled_margin(&self) -> rio_backend::config::layout::Margin {
         self.contexts[self.current_index].get_scaled_margin()
     }
