@@ -45,3 +45,7 @@
   - 分屏焦点 vi 风格方向切换：`<leader>`+H/J/K/L（左/下/上/右），基于 pane 几何（重叠优先、就近平手、无候选不动、不跨标签）；新增 `selectsplitleft/down/up/right` action
   - 鼠标默认屏蔽：新增 `disable-mouse`（默认 true，热重载），事件入口丢弃 MouseInput/CursorMoved/CursorLeft/MouseWheel/Touch，不向 PTY 转发
   - 快捷键清单全量更新（含底部输入栏小节、鼠标小节）；验证：rioterm 308 测试通过（含 2 个新几何测试）、clippy/fmt 干净，待用户实测
+- [x] 【已完成】修复 input-bar 配置节不生效（[详情](task/20261119-1340_修复input-bar配置节不生效.md)）
+  - 根因：`input_bar` 字段漏加 `rename = "input-bar"`，serde 只认 `[input_bar]` 下划线节名，连字符节被静默忽略回落默认值；`[panel]` 实际一直生效（默认 6/10 → 8/12 视觉差异小）
+  - 修复：补 rename 与全项目 kebab-case 键风格统一；新增回归测试 `test_input_bar_section_uses_hyphenated_key`
+  - 验证：config 测试 96 passed；已重建 release/tap（x11），待用户重启实测输入栏 60% 宽居中、200px 高
