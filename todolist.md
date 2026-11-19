@@ -82,8 +82,8 @@
   - 接线二（cwd 真值）：`focused_pane_cwd()` = OSC 7 `current_directory` 优先（提示符与 chpwd 双时机刷新）→ `foreground_process_path` 探测兜底 → None；Tab 补全与提交落盘换用，submit 的 Windows cfg 分支消并；ssh 远端 OSC 7 不更新由探测兜底覆盖
   - 明确不动：锁定判定维持修复轮次八（仅 ALT_SCREEN，标记只增强不门控）；bash/cmd 注入、远端标记、exit 的 UI 展示不做
   - 验证：rio-backend 229 / rio-vt 708 / rioterm 373（+8）通过，clippy/fmt 干净，待用户手测（zsh 提交后 input-history 尾行带 exit 列；bash 三列不变；ssh 补全 cwd 仍正确）
-- [ ] 【待开始】输入广播（多分屏同步提交）（[详情](task/20261119-2024_输入广播多分屏同步提交.md)）
-  - 形态（输入栏架构下天然收敛）：广播开关 toggle，开启期间提交 fan-out `line+\r` 到 scope 内全部 pane；逐键/控制键不广播（规避 tmux 广播灌控制键进 vim 的破坏性）
-  - v1 scope：当前标签全部分屏；安全边界：仅发非 ALT_SCREEN 锁定 pane，跳过时提示跳过数；最小可见性：开启时提示符前加标识（`>>` 或变色）；广播提交只记一条历史（焦点 pane cwd）
-  - 开放点：键位（候选 leader+B，对照快捷键清单避让）、多 pane cwd 补全归属（v1 仍按焦点 pane）、将来与 OSC 133 AtPrompt 真值联动
-  - 验证：cargo test + 手测（三 split 一次提交三处执行；vim pane 跳过且提示；关闭恢复单发；↑ 历史只多一条）
+- [x] 【已完成】输入广播（多分屏同步提交）（[详情](task/20261119-2024_输入广播多分屏同步提交.md)）
+  - 形态（输入栏架构下天然收敛）：`<leader>`+S toggle（leader+B 被向后搜索占用；自绑名 togglebroadcast，三平台 use_splits 表），开启时输入栏提示符变 `>> ❯`，提交 fan-out `line+\r` 到当前标签全部可用 pane；逐键/控制键不广播（规避 tmux 广播灌控制键进 vim 的破坏性）；历史仍记一条（焦点 pane cwd）
+  - 安全边界：仅发非 ALT_SCREEN 锁定 pane，跳过时输入栏上方 2s 瞬时提示跳过数（复用候选行位置，候选行显示时让位）；`broadcast_recipients` 纯函数 + 3 单测（关=仅焦点/开跳锁定/全锁定零发送）；热重载 mem::take 保留 bar 实例，广播状态跨重载存活
+  - 验证：rio-backend 229 / rioterm 376（+3）通过，clippy 0 告警，fmt 干净；快捷键清单已同步；待用户手测（三 split 一次提交三处执行、vim pane 跳过提示、关闭恢复单发、↑ 历史只多一条）
+  - 后续候选：全部标签/勾选集合 scope、与 OSC 133 AtPrompt 真值联动（仅发提示符态 pane）

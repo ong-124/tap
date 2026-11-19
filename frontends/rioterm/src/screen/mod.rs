@@ -110,6 +110,10 @@ pub struct Screen<'screen> {
     /// emit `D`, so the cap keeps their queues flat.
     exit_pending:
         std::collections::HashMap<usize, std::collections::VecDeque<(u64, String)>>,
+    /// Input broadcast toggle (`<leader>`+S): while on, submitted
+    /// lines fan out to every available pane of the current tab. The
+    /// input bar mirrors it for its `>>` prompt marker.
+    broadcast: bool,
 }
 
 pub struct ChromePress {
@@ -138,6 +142,31 @@ pub struct ScreenWindowProperties {
 #[inline]
 fn window_should_be_opaque(config: &rio_backend::config::Config) -> bool {
     config.window.opacity >= 1.0 && !config.window.blur.is_glass()
+}
+
+/// Broadcast fan-out decision for a submitted line, as `(route_id,
+/// alt_screen_locked)` pairs. Toggle off → the focused pane alone;
+/// toggle on → every available pane, with the locked ones only
+/// counted. Pure so the routing contract is testable without a
+/// ContextManager.
+fn broadcast_recipients(
+    panes: &[(usize, bool)],
+    broadcast: bool,
+    focused: usize,
+) -> (Vec<usize>, usize) {
+    if !broadcast {
+        return (vec![focused], 0);
+    }
+    let mut recipients = Vec::new();
+    let mut skipped = 0;
+    for &(route_id, locked) in panes {
+        if locked {
+            skipped += 1;
+        } else {
+            recipients.push(route_id);
+        }
+    }
+    (recipients, skipped)
 }
 
 impl Screen<'_> {
@@ -380,6 +409,7 @@ impl Screen<'_> {
             grids: rustc_hash::FxHashMap::default(),
             grid_rasterizer: rio_grid::GridGlyphRasterizer::new(),
             exit_pending: std::collections::HashMap::new(),
+            broadcast: false,
         })
     }
 
@@ -1365,7 +1395,45 @@ impl Screen<'_> {
 
         let mut bytes = line.into_bytes();
         bytes.push(b'\r');
-        self.ctx_mut().current_mut().messenger.send_write(bytes);
+
+        // Broadcast: with the toggle on the line goes to every
+        // available pane of the current tab — alt-screen panes are only
+        // counted, since feeding a composed line into vim/less would be
+        // destructive and passthrough keys are never broadcast anyway.
+        // Off, the focused pane alone receives it as before.
+        if self.broadcast {
+            let panes: Vec<(usize, bool)> = self
+                .context_manager
+                .current_grid()
+                .contexts()
+                .values()
+                .map(|item| {
+                    let context = item.context();
+                    (
+                        context.route_id,
+                        context.terminal.lock().mode().contains(Mode::ALT_SCREEN),
+                    )
+                })
+                .collect();
+            let (recipients, skipped) =
+                broadcast_recipients(&panes, true, self.context_manager.current_route());
+            for route_id in recipients {
+                if let Some(item) = self
+                    .context_manager
+                    .current_grid_mut()
+                    .get_by_route_id(route_id)
+                {
+                    item.context().messenger.send_write(bytes.clone());
+                }
+            }
+            if skipped > 0 {
+                self.renderer
+                    .input_bar
+                    .show_notice(format!("广播跳过 {skipped} 个锁定分屏"));
+            }
+        } else {
+            self.ctx_mut().current_mut().messenger.send_write(bytes);
+        }
     }
 
     /// One pane's command finished (OSC 133 `D`): drain the pane's
@@ -2033,6 +2101,12 @@ impl Screen<'_> {
                     Act::SelectSplitDirection(direction) => {
                         self.cancel_search(clipboard);
                         self.context_manager.select_split_direction(*direction);
+                        self.mark_dirty();
+                    }
+                    Act::ToggleBroadcast => {
+                        self.cancel_search(clipboard);
+                        self.broadcast = !self.broadcast;
+                        self.renderer.input_bar.set_broadcast(self.broadcast);
                         self.mark_dirty();
                     }
                     Act::SelectNextSplitOrTab => {
@@ -5695,5 +5769,29 @@ mod tests {
             at: std::time::Instant::now() - crate::constants::MULTI_CLICK_THRESHOLD * 2,
         };
         assert!(!stale.validates_double_click(origin));
+    }
+
+    #[test]
+    fn broadcast_off_targets_the_focused_pane_only() {
+        let panes = [(1, false), (2, false), (3, true)];
+        let (recipients, skipped) = broadcast_recipients(&panes, false, 2);
+        assert_eq!(recipients, vec![2]);
+        assert_eq!(skipped, 0);
+    }
+
+    #[test]
+    fn broadcast_on_skips_locked_panes_and_counts_them() {
+        let panes = [(1, false), (2, true), (3, false), (4, true), (5, true)];
+        let (recipients, skipped) = broadcast_recipients(&panes, true, 1);
+        assert_eq!(recipients, vec![1, 3]);
+        assert_eq!(skipped, 3);
+    }
+
+    #[test]
+    fn broadcast_with_no_available_pane_sends_nothing() {
+        let panes = [(7, true)];
+        let (recipients, skipped) = broadcast_recipients(&panes, true, 7);
+        assert!(recipients.is_empty());
+        assert_eq!(skipped, 1);
     }
 }

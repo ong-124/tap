@@ -268,6 +268,7 @@ impl From<String> for Action {
             "selectsplitleft" => Some(Action::SelectSplitDirection(SplitDirection::Left)),
             "selectsplitdown" => Some(Action::SelectSplitDirection(SplitDirection::Down)),
             "selectsplitup" => Some(Action::SelectSplitDirection(SplitDirection::Up)),
+            "togglebroadcast" => Some(Action::ToggleBroadcast),
             "selectsplitright" => {
                 Some(Action::SelectSplitDirection(SplitDirection::Right))
             }
@@ -516,6 +517,9 @@ pub enum Action {
 
     /// Select the pane in a vi-style direction (h/j/k/l)
     SelectSplitDirection(SplitDirection),
+    /// Toggle input broadcast: while on, submitted lines fan out to
+    /// every available pane of the current tab.
+    ToggleBroadcast,
 
     /// Select next split if available if not next tab
     SelectNextSplitOrTab,
@@ -1239,6 +1243,7 @@ pub fn platform_key_bindings(
             "j", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Down);
             "k", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Up);
             "l", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Right);
+            "s", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::ToggleBroadcast;
             Key::Named(ArrowUp), ModifiersState::CONTROL | ModifiersState::SUPER, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerUp;
             Key::Named(ArrowDown), ModifiersState::CONTROL | ModifiersState::SUPER, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerDown;
             Key::Named(ArrowLeft), ModifiersState::CONTROL | ModifiersState::SUPER, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerLeft;
@@ -1311,6 +1316,7 @@ pub fn platform_key_bindings(
             "j", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Down);
             "k", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Up);
             "l", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Right);
+            "s", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::ToggleBroadcast;
             Key::Named(ArrowUp), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerUp;
             Key::Named(ArrowDown), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerDown;
             Key::Named(ArrowLeft), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerLeft;
@@ -1389,6 +1395,7 @@ pub fn platform_key_bindings(
             "j", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Down);
             "k", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Up);
             "l", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Right);
+            "s", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::ToggleBroadcast;
             Key::Named(ArrowUp), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerUp;
             Key::Named(ArrowDown), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerDown;
             Key::Named(ArrowLeft), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerLeft;

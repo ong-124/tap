@@ -51,7 +51,12 @@ pub const MAX_HISTORY: usize = 255;
 /// it the next Tab asks the tool again (pods come and go).
 const DYNAMIC_CACHE_TTL: Duration = Duration::from_secs(10);
 
+/// Lifetime of a transient notice (broadcast panes skipped, ...).
+const NOTICE_TTL: Duration = Duration::from_secs(2);
+
 const PROMPT_SYMBOL: &str = "\u{276F}";
+/// Prompt prefix while a broadcast is armed.
+const BROADCAST_MARKER: &str = ">> ";
 const LOCKED_HINT: &str = "keys pass through";
 /// One bullet per character while the line is masked (password mode).
 const MASK_CHAR: char = '•';
@@ -148,6 +153,12 @@ pub struct InputBar {
     record_history: bool,
     /// `[input-bar] suggestions` — ghost-text suggestions on/off.
     suggestions: bool,
+    /// Mirror of the screen's broadcast toggle, drawn as a `>>`
+    /// prompt marker while on.
+    broadcast: bool,
+    /// Transient one-line notice above the main line (e.g. locked
+    /// panes skipped by a broadcast submit), shown until its deadline.
+    notice: Option<(String, Instant)>,
     caret_blink_start: Instant,
 }
 
@@ -202,6 +213,8 @@ impl Default for InputBar {
             dynamic_cache: std::collections::HashMap::new(),
             record_history: true,
             suggestions: true,
+            broadcast: false,
+            notice: None,
             caret_blink_start: Instant::now(),
         }
     }
@@ -324,6 +337,24 @@ impl InputBar {
     #[inline]
     pub fn has_preedit(&self) -> bool {
         self.preedit.is_some()
+    }
+
+    /// Mirror the screen's broadcast toggle for the `>>` prompt marker
+    /// (the screen owns the flag and the fan-out; the bar only shows).
+    pub fn set_broadcast(&mut self, broadcast: bool) {
+        self.broadcast = broadcast;
+    }
+
+    #[inline]
+    pub fn is_broadcast(&self) -> bool {
+        self.broadcast
+    }
+
+    /// Show a transient notice above the main line for a couple of
+    /// seconds (broadcast panes skipped, ...). Render drops it once
+    /// the deadline passes; a newer notice replaces an older one.
+    pub fn show_notice(&mut self, text: String) {
+        self.notice = Some((text, Instant::now() + NOTICE_TTL));
     }
 
     /// Turn on password masking (the caller probes the pty's echo
@@ -1246,16 +1277,58 @@ impl InputBar {
             }
         }
 
-        // Prompt symbol.
+        // Transient notice (broadcast panes skipped, ...): the row the
+        // candidates use, shown only while they are not. Expired ones
+        // are dropped right here — render reruns on every blink frame.
+        if self
+            .completion
+            .as_ref()
+            .map_or(true, |state| state.candidates.is_empty())
+        {
+            let expired = self
+                .notice
+                .as_ref()
+                .is_some_and(|(_, until)| *until <= Instant::now());
+            if expired {
+                self.notice = None;
+            }
+            if let Some((text, _)) = &self.notice {
+                let cand_font = font_size * 0.5;
+                let row_y = text_y - cand_font - 6.0;
+                if row_y >= panel_y + border_width + 4.0 {
+                    let notice_opts = DrawOpts {
+                        font_size: cand_font,
+                        color: color_u8(TEXT_COLOR),
+                        ..DrawOpts::default()
+                    };
+                    let max_row_width = (content_right - content_x).max(0.0);
+                    let text = crate::renderer::elide_tail(text, max_row_width, |s| {
+                        sugarloaf.text_mut().measure(s, &notice_opts)
+                    });
+                    sugarloaf
+                        .text_mut()
+                        .draw(content_x, row_y, &text, &notice_opts);
+                }
+            }
+        }
+
+        // Prompt symbol, prefixed with the broadcast marker while a
+        // fan-out is armed: one draw call, the marker shares the
+        // prompt color and the width math carries over untouched.
         let prompt_opts = DrawOpts {
             font_size,
             color: color_u8(PROMPT_COLOR),
             ..DrawOpts::default()
         };
+        let prompt = if self.broadcast {
+            format!("{BROADCAST_MARKER}{PROMPT_SYMBOL}")
+        } else {
+            PROMPT_SYMBOL.to_string()
+        };
         let prompt_width =
             sugarloaf
                 .text_mut()
-                .draw(content_x, text_y, PROMPT_SYMBOL, &prompt_opts);
+                .draw(content_x, text_y, &prompt, &prompt_opts);
         let text_x = content_x + prompt_width + PROMPT_GAP;
 
         // Right edge of the text area.
