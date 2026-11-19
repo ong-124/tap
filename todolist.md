@@ -6,8 +6,8 @@
   - 输入栏 UI 与渲染层（底部固定栏，sugarloaf）：input_bar.rs（❯ 提示符 + 闪烁 caret + 超宽横向滚动 + 锁定态变暗提示文案），margin.bottom 预留 36px，终端行数自动减少、不遮挡末行
   - 输入缓冲与编辑（光标移动、历史记录）：Left/Right/Home/End/Backspace/Delete、Ctrl+W（bash rubout）/Ctrl+U；↑/↓ 历史（容量 255、相邻去重、编辑即分叉）；IME preedit ghost（下划线跟随）与粘贴进缓冲
   - 提交发送整行命令到 PTY：Enter 整行+\r 经 send_write；Ctrl+C/D/Z/L 等控制组合直通（Ctrl+C 同时清空输入栏缓冲）；Tab/Escape 直通（已知限制）
-  - 可配置启用/禁用（保留传统直接输入模式）：enable-input-bar（默认 true，支持热重载 take/restore 不丢输入）；OSC 133 zone + alt-screen 兜底智能路由：命令运行中输入栏锁定、按键直通焦点 pane，回提示符自动恢复；无 133 的 shell 降级为常激活（bash 下 vim/less 仍可经 alt-screen 锁定，REPL 为已知限制）
-  - 验证：rio-vt 695 / rio-backend 222 / rioterm 305 测试通过，clippy/fmt 干净；待用户手测（zsh 命令流与历史、vim/less 锁定切换、中文 IME、多 split 焦点跟随）
+  - 可配置启用/禁用（保留传统直接输入模式）：enable-input-bar（默认 true，支持热重载 take/restore 不丢输入）；智能路由仅按 ALT_SCREEN 锁定（20261119-1654 修复轮次八：仅 vim/nano/less/tmux 等全屏编辑类程序锁定直通，SSH 会话与命令运行期输入栏保持可用——原 OSC 133 zone 判定在 SSH 下因远程无标记永锁，zone 机制已移除）
+  - 验证：rio-vt 695 / rio-backend 222 / rioterm 305 测试通过，clippy/fmt 干净；修复轮次八后 rio-vt 694 / rioterm 332 通过；待用户手测（zsh 命令流与历史、vim/less 锁定切换、中文 IME、多 split 焦点跟随、ssh 会话输入栏可用）
 - [x] 【已完成】背景图透明度与字符层分离（[详情](task/20261118-1941_背景图透明度与字符层分离.md)）
   - 复现问题并定位根因（opacity 作用层级）：wgpu/Vulkan 路径背景图绘制晚于 grid 文本层，半透明图像直接盖在字符上
   - 背景图独立暗化/透明度处理，不影响字符渲染：背景图绘制前移至 grid 之前（与 Metal 一致），基色改为主题背景色
