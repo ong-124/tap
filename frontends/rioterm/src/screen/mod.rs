@@ -144,31 +144,6 @@ fn window_should_be_opaque(config: &rio_backend::config::Config) -> bool {
     config.window.opacity >= 1.0 && !config.window.blur.is_glass()
 }
 
-/// Broadcast fan-out decision for a submitted line, as `(route_id,
-/// alt_screen_locked)` pairs. Toggle off → the focused pane alone;
-/// toggle on → every available pane, with the locked ones only
-/// counted. Pure so the routing contract is testable without a
-/// ContextManager.
-fn broadcast_recipients(
-    panes: &[(usize, bool)],
-    broadcast: bool,
-    focused: usize,
-) -> (Vec<usize>, usize) {
-    if !broadcast {
-        return (vec![focused], 0);
-    }
-    let mut recipients = Vec::new();
-    let mut skipped = 0;
-    for &(route_id, locked) in panes {
-        if locked {
-            skipped += 1;
-        } else {
-            recipients.push(route_id);
-        }
-    }
-    (recipients, skipped)
-}
-
 impl Screen<'_> {
     pub fn new<'screen>(
         window_properties: ScreenWindowProperties,
@@ -979,7 +954,7 @@ impl Screen<'_> {
                 _ => build_key_sequence(key, mods, mode),
             };
 
-            self.ctx_mut().current_mut().messenger.send_write(bytes);
+            self.send_input_bytes(bytes);
 
             return;
         }
@@ -1115,7 +1090,7 @@ impl Screen<'_> {
             self.scroll_bottom_when_cursor_not_visible();
             self.clear_selection();
 
-            self.ctx_mut().current_mut().messenger.send_write(bytes);
+            self.send_input_bytes(bytes);
         }
     }
 
@@ -1244,16 +1219,11 @@ impl Screen<'_> {
                     return true;
                 }
                 // Ctrl+C interrupts what the shell is showing; the
-                // half-composed line no longer matches the prompt.
-                // While a broadcast is armed the interrupt fans out
-                // too: a long command started by a broadcast must be
-                // stoppable in one press (the focused pane still gets
-                // its byte through the normal passthrough below).
+                // half-composed line no longer matches the prompt. The
+                // byte itself falls through to the shared input path,
+                // which fans it out while a broadcast is armed.
                 "c" => {
                     self.renderer.input_bar.clear();
-                    if self.broadcast {
-                        self.broadcast_to_others(&[b'\x03']);
-                    }
                     return false;
                 }
                 _ => return false,
@@ -1402,74 +1372,23 @@ impl Screen<'_> {
 
         let mut bytes = line.into_bytes();
         bytes.push(b'\r');
+        self.send_input_bytes(bytes);
+    }
 
-        // Broadcast: with the toggle on the line goes to every
-        // available pane of the current tab — alt-screen panes are only
-        // counted, since feeding a composed line into vim/less would be
-        // destructive and passthrough keys are never broadcast anyway.
-        // Off, the focused pane alone receives it as before.
-        if self.broadcast {
-            let (recipients, skipped) = broadcast_recipients(
-                &self.broadcast_panes(),
-                true,
-                self.context_manager.current_route(),
-            );
-            for route_id in recipients {
-                if let Some(item) = self
-                    .context_manager
-                    .current_grid_mut()
-                    .get_by_route_id(route_id)
-                {
-                    item.context().messenger.send_write(bytes.clone());
-                }
-            }
-            if skipped > 0 {
-                self.renderer
-                    .input_bar
-                    .show_notice(format!("广播跳过 {skipped} 个锁定分屏"));
-            }
-        } else {
+    /// Terminal input bytes on their way to the focused pane's PTY —
+    /// key presses, key releases (kitty event reporting), pastes and
+    /// submitted lines all funnel through here. While a broadcast is
+    /// armed, every pane of the current tab receives them faithfully
+    /// and without filtering: the user opened the mode and owns what
+    /// they type (tmux `synchronize-panes` semantics). Mouse traffic
+    /// stays focused-only.
+    fn send_input_bytes(&mut self, bytes: Vec<u8>) {
+        if !self.broadcast {
             self.ctx_mut().current_mut().messenger.send_write(bytes);
+            return;
         }
-    }
-
-    /// The current tab's panes as `(route_id, alt_screen_locked)`
-    /// pairs — the broadcast recipient pool.
-    fn broadcast_panes(&self) -> Vec<(usize, bool)> {
-        self.context_manager
-            .current_grid()
-            .contexts()
-            .values()
-            .map(|item| {
-                let context = item.context();
-                (
-                    context.route_id,
-                    context.terminal.lock().mode().contains(Mode::ALT_SCREEN),
-                )
-            })
-            .collect()
-    }
-
-    /// Send `bytes` to every available pane of the current tab except
-    /// the focused one, whose copy arrives through the normal
-    /// passthrough path. Used by the Ctrl+C fan-out; locked panes are
-    /// silently skipped (a SIGINT into vim would be destructive and is
-    /// not needed to stop a broadcasted command).
-    fn broadcast_to_others(&mut self, bytes: &[u8]) {
-        let focused = self.context_manager.current_route();
-        let (recipients, _) =
-            broadcast_recipients(&self.broadcast_panes(), true, focused);
-        for route_id in recipients {
-            if route_id == focused {
-                continue;
-            }
-            if let Some(item) = self
-                .context_manager
-                .current_grid_mut()
-                .get_by_route_id(route_id)
-            {
-                item.context().messenger.send_write(bytes.to_vec());
-            }
+        for item in self.context_manager.current_grid().contexts().values() {
+            item.context().messenger.send_write(bytes.clone());
         }
     }
 
@@ -4407,7 +4326,7 @@ impl Screen<'_> {
                 text.to_owned().into_bytes()
             };
 
-            self.ctx_mut().current_mut().messenger.send_write(payload);
+            self.send_input_bytes(payload);
         }
     }
 
@@ -5806,29 +5725,5 @@ mod tests {
             at: std::time::Instant::now() - crate::constants::MULTI_CLICK_THRESHOLD * 2,
         };
         assert!(!stale.validates_double_click(origin));
-    }
-
-    #[test]
-    fn broadcast_off_targets_the_focused_pane_only() {
-        let panes = [(1, false), (2, false), (3, true)];
-        let (recipients, skipped) = broadcast_recipients(&panes, false, 2);
-        assert_eq!(recipients, vec![2]);
-        assert_eq!(skipped, 0);
-    }
-
-    #[test]
-    fn broadcast_on_skips_locked_panes_and_counts_them() {
-        let panes = [(1, false), (2, true), (3, false), (4, true), (5, true)];
-        let (recipients, skipped) = broadcast_recipients(&panes, true, 1);
-        assert_eq!(recipients, vec![1, 3]);
-        assert_eq!(skipped, 3);
-    }
-
-    #[test]
-    fn broadcast_with_no_available_pane_sends_nothing() {
-        let panes = [(7, true)];
-        let (recipients, skipped) = broadcast_recipients(&panes, true, 7);
-        assert!(recipients.is_empty());
-        assert_eq!(skipped, 1);
     }
 }
