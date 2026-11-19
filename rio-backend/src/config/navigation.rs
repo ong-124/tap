@@ -1,4 +1,4 @@
-use crate::config::colors::{deserialize_to_arr, deserialize_to_arr_opt, ColorArray};
+use crate::config::colors::{deserialize_to_arr, ColorArray};
 use crate::config::default_bool_true;
 use serde::{Deserialize, Serialize};
 

@@ -178,6 +178,8 @@ impl InputBar {
 
     /// Pure metrics setter (testable without a GPU): `font_size` is
     /// the terminal's, `cell_height` one terminal line in logical px.
+    /// Only tests call it today; the renderer resolves metrics directly.
+    #[allow(dead_code)]
     pub fn set_metrics(&mut self, font_size: f32, cell_height: f32) {
         self.font_size = font_size * INPUT_FONT_SCALE;
         self.cell_height = cell_height;

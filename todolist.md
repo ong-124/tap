@@ -55,3 +55,8 @@
   - Tab 补全（仅文件系统）：首词 = PATH 可执行 + 30 内建，其余词 = 焦点 pane cwd 路径（`~` 展开、隐藏项过滤、目录补 `/`）；多候选 = 公共前缀 + 面板内候选行（高亮项保证可见）+ Tab 循环；Tab 一律消费不再泄漏 PTY（Shift+Tab 仍直通，自绑 Tab 优先）
   - 配置：`[input-bar] record-history / suggestions`（默认开，热重载即时生效）；提交落盘在 close_if_exited 检查之后（pane 退出的行不记录），与内存相邻去重锁步
   - 验证：rio-backend 228 / rioterm 330（新增 22）测试通过，clippy/fmt 干净，待用户手测（重启回显历史、建议接受/消失、补全循环、分屏各自 cwd、热重载开关）
+- [x] 【已完成】清理 build 刷屏警告（[详情](task/20261119-1636_清理build刷屏警告.md)）
+  - 真实问题修复：未用 import ×3、X11 IME 函数指针 `as *const ()` 再转 usize、teletypewriter `uses_default_shell` 按 macOS cfg 门控、corcovado 冗余 homepage、删除从未编译的孤儿文件 font_cache.rs
+  - 门控误报处理：`BorderConfig.color` / `should_draw_borders` / `set_metrics`（测试或待接分屏描边使用）按项目惯例加 `#[allow(dead_code)]`；rio-backend 测试专用 `onig` 移入 dev-deps 并删未用 `url`
+  - 依赖清单清理：根 workspace 删 6 个无成员引用的依赖（frontends/wasm 非成员、版本就地内联）；rioterm `wgpu` 改 optional 挂 `wgpu` feature；sugarloaf 删 5 个未用依赖、`futures/rayon/thiserror` 挂 `wgpu` feature；librio-wasm 依赖移入 wasm32 target 表；rioterm 删 `lru`/`futures`
+  - 验证：默认构建与 `--features wgpu` 构建均 0 警告；rio-backend 228 / rioterm 332 / teletypewriter 17 测试通过

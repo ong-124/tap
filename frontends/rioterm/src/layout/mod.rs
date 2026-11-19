@@ -6,7 +6,7 @@ use crate::mouse::Mouse;
 use rio_backend::config::layout::Margin;
 use rio_backend::crosswords::grid::Dimensions;
 use rio_backend::event::EventListener;
-use rio_backend::sugarloaf::{layout::TextDimensions, Rect, Sugarloaf};
+use rio_backend::sugarloaf::{layout::TextDimensions, Sugarloaf};
 use rustc_hash::FxHashMap;
 
 use taffy::{
@@ -178,6 +178,9 @@ fn basis_plus(basis: taffy::Dimension, delta: f32) -> taffy::Dimension {
 #[derive(Debug, Clone, Copy)]
 pub struct BorderConfig {
     pub width: f32,
+    /// Plumbed from config for the upcoming separator rendering; only
+    /// hit-testing (`width`) is wired up today.
+    #[allow(dead_code)]
     pub color: [f32; 4],
 }
 
@@ -456,6 +459,8 @@ impl<T: rio_backend::event::EventListener> ContextGrid<T> {
         self.inner.len()
     }
 
+    /// Asserted by `compute_tests`; separator drawing is not wired up yet.
+    #[allow(dead_code)]
     pub fn should_draw_borders(&self) -> bool {
         self.panel_count() > 1
     }

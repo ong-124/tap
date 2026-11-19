@@ -21,7 +21,9 @@ global-hotkey = "0.8.0"
 base64 = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "registry"] }
-wgpu = { workspace = true }
+# Optional: the dep is only referenced under `cfg(wgpu_backend)` (see
+# build.rs), which the `wgpu` feature turns on.
+wgpu = { workspace = true, optional = true }
 rio-backend = { workspace = true }
 rio-grid = { workspace = true }
 
@@ -31,7 +33,6 @@ criterion = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 bitflags = { workspace = true }
-futures = { workspace = true }
 corcovado = { workspace = true }
 regex = { workspace = true }
 onig = { workspace = true }
@@ -52,7 +53,6 @@ rio-unicode = { workspace = true }
 url = { workspace = true }
 smallvec = { workspace = true }
 rio-window = { workspace = true }
-lru = "0.16.0"
 
 [target.'cfg(all(not(target_os = "macos"), not(target_os = "windows")))'.dependencies]
 cpal = { version = "0.15", optional = true }
@@ -112,7 +112,7 @@ wayland = [
     "rio-window/wayland",
     "rio-window/wayland-dlopen",
 ]
-wgpu = ["sugarloaf/wgpu", "rio-backend/wgpu"]
+wgpu = ["dep:wgpu", "sugarloaf/wgpu", "rio-backend/wgpu"]
 
 # "rio-window/wayland-csd-adwaita-crossfont",
 
