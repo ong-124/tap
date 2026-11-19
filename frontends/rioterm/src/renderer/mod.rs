@@ -350,7 +350,11 @@ impl Renderer {
             search: search::SearchOverlay::default(),
             assistant: assistant::AssistantOverlay::default(),
             confirm_quit: confirm_quit::ConfirmQuit::default(),
-            input_bar: input_bar::InputBar::new(config.enable_input_bar),
+            input_bar: {
+                let mut bar = input_bar::InputBar::new(config.enable_input_bar);
+                bar.set_size(config.input_bar.width, config.input_bar.height);
+                bar
+            },
             border_width: config.panel.border_width,
             border_radius: config.panel.border_radius,
             scrollbar: scrollbar::Scrollbar::new(config.enable_scroll_bar),

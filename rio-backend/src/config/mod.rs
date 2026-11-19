@@ -7,6 +7,7 @@ pub use rio_vt::config::{colors, ConfigError};
 pub mod defaults;
 pub mod effects;
 pub mod hints;
+pub mod input_bar;
 pub mod keyboard;
 pub mod layout;
 pub mod navigation;
@@ -22,6 +23,7 @@ use crate::config::bindings::Bindings;
 use crate::config::command_finished::NotifyOnCommandFinish;
 use crate::config::defaults::*;
 use crate::config::hints::Hints;
+use crate::config::input_bar::InputBarConfig;
 use crate::config::keyboard::Keyboard;
 use crate::config::layout::{Margin, Panel};
 use crate::config::navigation::Navigation;
@@ -257,6 +259,10 @@ pub struct Config {
     /// while a command is running (OSC 133 zone or alt screen).
     #[serde(default = "default_bool_true", rename = "enable-input-bar")]
     pub enable_input_bar: bool,
+    /// `[input-bar]` — bar geometry: centered width and height, each
+    /// in pixels or percent of the window.
+    #[serde(default = "InputBarConfig::default")]
+    pub input_bar: InputBarConfig,
     #[serde(
         default = "default_scrollback_history_limit",
         rename = "scrollback-history-limit"
@@ -769,6 +775,7 @@ impl Default for Config {
             notify_on_command_finish: NotifyOnCommandFinish::default(),
             enable_scroll_bar: true,
             enable_input_bar: true,
+            input_bar: InputBarConfig::default(),
             scrollback_history_limit: default_scrollback_history_limit(),
             effects: effects::Effects::default(),
         }

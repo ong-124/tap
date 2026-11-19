@@ -579,6 +579,7 @@ impl Screen<'_> {
         self.renderer = Renderer::new(config);
         self.renderer.is_window_focused = was_focused;
         old_input_bar.set_enabled(config.enable_input_bar);
+        old_input_bar.set_size(config.input_bar.width, config.input_bar.height);
         self.renderer.input_bar = old_input_bar;
         // Bar size follows the (possibly new) font metrics, and the
         // margin below uses the refreshed height.
@@ -749,6 +750,28 @@ impl Screen<'_> {
         self.sugarloaf.resize(new_size.width, new_size.height);
         let width = new_size.width as f32;
         let height = new_size.height as f32;
+
+        // A percent-height input bar reserves a fraction of the window:
+        // re-resolve and resync every grid's bottom margin before the
+        // relayout below consumes it.
+        if self.renderer.input_bar.is_enabled() {
+            let scale = self.sugarloaf.scale_factor();
+            let logical_height = height / scale;
+            if self.renderer.input_bar.refresh_height(logical_height) {
+                let bottom = (self.renderer.margin.bottom
+                    + self.renderer.input_bar.height())
+                    * scale;
+                for context_grid in self.context_manager.contexts_mut() {
+                    let margin = context_grid.scaled_margin;
+                    context_grid.update_scaled_margin(Margin::new(
+                        margin.top,
+                        margin.right,
+                        bottom,
+                        margin.left,
+                    ));
+                }
+            }
+        }
 
         self.context_manager.resize_all_grids(width, height);
 

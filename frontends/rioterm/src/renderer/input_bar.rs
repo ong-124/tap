@@ -3,6 +3,7 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+use rio_backend::config::input_bar::SizeSpec;
 use rio_backend::sugarloaf::text::DrawOpts;
 use rio_backend::sugarloaf::Sugarloaf;
 use std::time::Instant;
@@ -30,6 +31,9 @@ const PANEL_INSET_X: f32 = 8.0;
 const PANEL_INSET_Y: f32 = 4.0;
 const TEXT_PADDING_X: f32 = 12.0;
 const PROMPT_GAP: f32 = 10.0;
+/// Floor for the configured height — a bar shorter than this cannot
+/// fit its own text.
+const MIN_BAR_HEIGHT: f32 = 24.0;
 
 const CARET_WIDTH: f32 = 2.0;
 /// Blink period shared by the render-time phase math and the wake the
@@ -68,7 +72,14 @@ pub struct InputBar {
     locked: bool,
     /// Input text size in logical px (INPUT_FONT_SCALE × terminal).
     font_size: f32,
-    /// Reserved height in logical px (INPUT_BAR_LINES × cell height).
+    /// `[input-bar] width` — resolved against the window at render
+    /// time, the panel is centered horizontally.
+    width: SizeSpec,
+    /// `[input-bar] height` — `None` falls back to six terminal lines.
+    height_spec: Option<SizeSpec>,
+    /// One terminal line in logical px, for the Lines fallback.
+    cell_height: f32,
+    /// Reserved height in logical px, resolved from `height_spec`.
     height_px: f32,
     buffer: String,
     /// Cursor position in chars.
@@ -90,6 +101,9 @@ impl Default for InputBar {
             enabled: false,
             locked: false,
             font_size: 0.0,
+            width: SizeSpec::Percent(100.0),
+            height_spec: None,
+            cell_height: 0.0,
             height_px: 0.0,
             buffer: String::new(),
             cursor: 0,
@@ -135,7 +149,48 @@ impl InputBar {
     /// the terminal's, `cell_height` one terminal line in logical px.
     pub fn set_metrics(&mut self, font_size: f32, cell_height: f32) {
         self.font_size = font_size * INPUT_FONT_SCALE;
-        self.height_px = cell_height * INPUT_BAR_LINES;
+        self.cell_height = cell_height;
+        self.resolve_height(0.0);
+    }
+
+    /// Apply `[input-bar] width` / `height`.
+    pub fn set_size(&mut self, width: SizeSpec, height: Option<SizeSpec>) {
+        self.width = width;
+        self.height_spec = height;
+    }
+
+    /// Resolve the reserved height from `height_spec`: pixels as-is,
+    /// percent of the window height (with a floor so a stray config
+    /// cannot erase the bar), six terminal lines when unset.
+    fn resolve_height(&mut self, window_height: f32) {
+        self.height_px = match self.height_spec {
+            None => self.cell_height * INPUT_BAR_LINES,
+            Some(SizeSpec::Px(px)) => px,
+            Some(SizeSpec::Percent(percent)) => {
+                (percent / 100.0 * window_height).max(MIN_BAR_HEIGHT)
+            }
+        }
+        .max(MIN_BAR_HEIGHT);
+    }
+
+    /// Re-resolve after a window resize (percent heights track the
+    /// window). Returns whether the reserved height changed.
+    pub fn refresh_height(&mut self, window_height: f32) -> bool {
+        let before = self.height_px;
+        self.resolve_height(window_height);
+        before != self.height_px
+    }
+
+    /// Panel geometry inside the reserved band: width resolved from
+    /// the config and centered horizontally.
+    fn panel_geometry(&self, logical_width: f32) -> (f32, f32) {
+        let available = (logical_width - PANEL_INSET_X * 2.0).max(0.0);
+        let width = match self.width {
+            SizeSpec::Px(px) => px,
+            SizeSpec::Percent(percent) => percent / 100.0 * logical_width,
+        }
+        .clamp(0.0, available);
+        (PANEL_INSET_X + (available - width) / 2.0, width)
     }
 
     /// Recompute size from the terminal's live font: the bar is six
@@ -148,7 +203,10 @@ impl InputBar {
     ) {
         let scale = sugarloaf.scale_factor();
         let (_, cell) = sugarloaf.compute_cell_metrics(font_size, line_height, scale);
-        self.set_metrics(font_size, cell.cell_height as f32 / scale);
+        self.font_size = font_size * INPUT_FONT_SCALE;
+        self.cell_height = cell.cell_height as f32 / scale;
+        let window = sugarloaf.window_size();
+        self.resolve_height(window.height / scale);
     }
 
     /// Update the lock state from the focused pane's zone. Unlocking
@@ -390,13 +448,13 @@ impl InputBar {
         let logical_width = window_width / scale_factor;
         let logical_height = window_height / scale_factor;
 
-        // Framed panel floating inside the reserved band. The center
-        // stays fully transparent — the window background (or image)
-        // shows through and the bar's own paint is only the thick
-        // translucent rounded border.
-        let panel_x = PANEL_INSET_X;
+        // Framed panel floating inside the reserved band, horizontally
+        // centered at the configured width. The center stays fully
+        // transparent — the window background (or image) shows through
+        // and the bar's own paint is only the thick translucent
+        // rounded border.
+        let (panel_x, panel_w) = self.panel_geometry(logical_width);
         let panel_y = logical_height - self.height_px + PANEL_INSET_Y;
-        let panel_w = (logical_width - PANEL_INSET_X * 2.0).max(0.0);
         let panel_h = (self.height_px - PANEL_INSET_Y * 2.0).max(0.0);
 
         let border = if self.locked {
@@ -712,5 +770,58 @@ mod tests {
         bar.set_metrics(24.0, 26.0);
         assert_eq!(bar.height(), 26.0 * INPUT_BAR_LINES);
         assert_eq!(bar.font_size, 24.0 * INPUT_FONT_SCALE);
+    }
+
+    #[test]
+    fn configured_height_overrides_the_lines_default() {
+        let mut bar = InputBar::new(true);
+        bar.set_metrics(18.0, 21.5);
+
+        bar.set_size(SizeSpec::Percent(100.0), Some(SizeSpec::Px(120.0)));
+        assert!(bar.refresh_height(1000.0));
+        assert_eq!(bar.height(), 120.0);
+        assert!(!bar.refresh_height(999.0), "px height ignores the window");
+
+        bar.set_size(SizeSpec::Percent(100.0), Some(SizeSpec::Percent(25.0)));
+        assert!(bar.refresh_height(800.0));
+        assert_eq!(bar.height(), 200.0);
+
+        // The floor keeps a stray percent from erasing the bar.
+        bar.set_size(SizeSpec::Percent(100.0), Some(SizeSpec::Px(4.0)));
+        assert!(bar.refresh_height(800.0));
+        assert_eq!(bar.height(), MIN_BAR_HEIGHT);
+
+        // Unset falls back to six terminal lines.
+        bar.set_size(SizeSpec::Percent(100.0), None);
+        assert!(bar.refresh_height(800.0));
+        assert_eq!(bar.height(), 21.5 * INPUT_BAR_LINES);
+    }
+
+    #[test]
+    fn panel_width_is_centered() {
+        let mut bar = InputBar::new(true);
+
+        // Full width (default): spans the whole band.
+        let (x, w) = bar.panel_geometry(1000.0);
+        assert_eq!(x, PANEL_INSET_X);
+        assert_eq!(w, 1000.0 - PANEL_INSET_X * 2.0);
+
+        // 60% of the window, centered.
+        bar.set_size(SizeSpec::Percent(60.0), None);
+        let (x, w) = bar.panel_geometry(1000.0);
+        assert_eq!(w, 600.0);
+        assert_eq!(x, (1000.0 - 600.0) / 2.0);
+
+        // Pixels, centered.
+        bar.set_size(SizeSpec::Px(400.0), None);
+        let (x, w) = bar.panel_geometry(1000.0);
+        assert_eq!(w, 400.0);
+        assert_eq!(x, 300.0);
+
+        // Oversized configs clamp to the band.
+        bar.set_size(SizeSpec::Px(4000.0), None);
+        let (x, w) = bar.panel_geometry(1000.0);
+        assert_eq!(x, PANEL_INSET_X);
+        assert_eq!(w, 1000.0 - PANEL_INSET_X * 2.0);
     }
 }
