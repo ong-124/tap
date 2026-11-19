@@ -6,7 +6,7 @@
 use rio_backend::config::input_bar::SizeSpec;
 use rio_backend::sugarloaf::text::DrawOpts;
 use rio_backend::sugarloaf::Sugarloaf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Convert `[f32; 4]` colour to the `[u8; 4]` non-premul form the
 /// `Text` draw path expects (the vertex shader premultiplies).
@@ -45,6 +45,11 @@ const PREEDIT_UNDERLINE_HEIGHT: f32 = 2.0;
 
 /// Kept in memory only, mirroring the search history limit.
 pub const MAX_HISTORY: usize = 255;
+
+/// How long a dynamic completion answer stays trusted. Cycling
+/// candidates or re-Tabbing within the window never re-queries; past
+/// it the next Tab asks the tool again (pods come and go).
+const DYNAMIC_CACHE_TTL: Duration = Duration::from_secs(10);
 
 const PROMPT_SYMBOL: &str = "\u{276F}";
 const LOCKED_HINT: &str = "keys pass through";
@@ -111,11 +116,35 @@ pub struct InputBar {
     /// Live Tab-completion cycle state; kept only while the word under
     /// the cursor is still the one this state last produced.
     completion: Option<CompletionState>,
+    /// `[input-bar] dynamic-completion` — Cobra `__complete` queries,
+    /// ssh hosts, remote lookups.
+    dynamic: bool,
+    /// `[input-bar] command-aliases` — alias → Cobra tool mapping.
+    aliases: std::collections::HashMap<String, String>,
+    /// ssh destination of the session running in the focused pane,
+    /// snapshotted on each Tab from the completion sources.
+    session_ssh_host: Option<String>,
+    /// In-flight dynamic query: the request key plus the channel its
+    /// worker thread will answer on. Dropped on lock, config reload
+    /// or when a newer request replaces it.
+    pending: Option<PendingDynamic>,
+    /// Recent dynamic answers, so cycling candidates or re-Tabbing
+    /// doesn't re-query the cluster (TTL-bounded for freshness).
+    dynamic_cache: std::collections::HashMap<
+        String,
+        (Instant, Vec<crate::completion::Candidate>, bool),
+    >,
     /// `[input-bar] record-history` — persist submitted lines.
     record_history: bool,
     /// `[input-bar] suggestions` — ghost-text suggestions on/off.
     suggestions: bool,
     caret_blink_start: Instant,
+}
+
+/// A dynamic query awaiting its worker thread's answer.
+struct PendingDynamic {
+    key: String,
+    rx: std::sync::mpsc::Receiver<crate::completion::DynamicResult>,
 }
 
 /// Tab-completion cycle: the word region it owns, the word currently
@@ -153,6 +182,11 @@ impl Default for InputBar {
             preedit: None,
             suggestion: None,
             completion: None,
+            dynamic: true,
+            aliases: std::collections::HashMap::new(),
+            session_ssh_host: None,
+            pending: None,
+            dynamic_cache: std::collections::HashMap::new(),
             record_history: true,
             suggestions: true,
             caret_blink_start: Instant::now(),
@@ -264,6 +298,9 @@ impl InputBar {
             if locked {
                 self.suggestion = None;
                 self.completion = None;
+                // An in-flight answer belongs to a prompt that is gone;
+                // drop it (the worker finishes harmlessly on its own).
+                self.pending = None;
             } else {
                 self.caret_blink_start = Instant::now();
             }
@@ -322,10 +359,25 @@ impl InputBar {
         self.refresh_suggestion();
     }
 
-    /// `[input-bar] record-history` / `suggestions`.
-    pub fn set_options(&mut self, record_history: bool, suggestions: bool) {
+    /// `[input-bar] record-history` / `suggestions` / `dynamic-completion`
+    /// / `command-aliases`.
+    pub fn set_options(
+        &mut self,
+        record_history: bool,
+        suggestions: bool,
+        dynamic: bool,
+        aliases: std::collections::HashMap<String, String>,
+    ) {
         self.record_history = record_history;
         self.suggestions = suggestions;
+        if self.dynamic != dynamic || self.aliases != aliases {
+            // Routing just changed: an in-flight answer no longer
+            // matches what the new configuration would ask for.
+            self.pending = None;
+            self.session_ssh_host = None;
+        }
+        self.dynamic = dynamic;
+        self.aliases = aliases;
         self.invalidate_completion();
         self.refresh_suggestion();
     }
@@ -393,12 +445,18 @@ impl InputBar {
     /// space suffix); further presses on an unchanged word cycle the
     /// full candidates. An empty word or no matches consumes the key
     /// without acting.
+    ///
+    /// Routing decides where candidates come from: the static sources
+    /// (PATH commands, pane cwd paths), the ssh host table, or a
+    /// dynamic query (`__complete`, compgen) that fills the row when
+    /// its worker answers.
     pub fn tab_complete(&mut self, sources: &crate::completion::Sources) {
         if self.preedit.is_some() || self.masked {
             return;
         }
+        self.session_ssh_host = sources.session_ssh_host.clone();
 
-        let (word_start, word) = self.word_before_cursor();
+        let (word_start, word, word_idx, argv) = self.token_context();
 
         // Cycle: same word start and same word text as the live state.
         // `index` is the candidate currently sitting in the buffer, so
@@ -426,16 +484,177 @@ impl InputBar {
             // Stale state: dropped, a fresh completion runs below.
         }
 
-        if word.is_empty() {
+        match crate::completion::route(
+            &argv,
+            word_idx,
+            &word,
+            word_start,
+            &self.aliases,
+            sources.session_ssh_host.as_deref(),
+        ) {
+            crate::completion::Route::Dynamic(request) => {
+                if self.dynamic {
+                    self.start_dynamic(request, word_start, &word);
+                } else {
+                    // The feature is off: legacy static completion.
+                    if word.is_empty() {
+                        return;
+                    }
+                    let candidates =
+                        crate::completion::gather(word_start, &word, sources);
+                    self.apply_candidates_at(candidates, word_start, &word, false);
+                }
+            }
+            crate::completion::Route::SshHosts => {
+                if word.is_empty() {
+                    return;
+                }
+                let candidates = crate::completion::ssh_host_candidates(
+                    &word,
+                    sources.home.as_deref(),
+                );
+                self.apply_candidates_at(candidates, word_start, &word, false);
+            }
+            crate::completion::Route::Command | crate::completion::Route::Path => {
+                if word.is_empty() {
+                    return;
+                }
+                let candidates = crate::completion::gather(word_start, &word, sources);
+                self.apply_candidates_at(candidates, word_start, &word, false);
+            }
+            crate::completion::Route::None => {}
+        }
+    }
+
+    /// Split the buffer before the cursor into shell-lite tokens and
+    /// describe the word being completed: its raw char span, its text,
+    /// its token index and the argv of complete words before it.
+    fn token_context(&self) -> (usize, String, usize, Vec<String>) {
+        let prefix: Vec<char> = self.buffer.chars().take(self.cursor).collect();
+        let tokens = crate::completion::tokenize(&prefix);
+        let at_word_start = prefix.last().is_none_or(|c| c.is_whitespace());
+        if at_word_start {
+            let argv: Vec<String> = tokens.into_iter().map(|t| t.text).collect();
+            (self.cursor, String::new(), argv.len(), argv)
+        } else {
+            let mut tokens = tokens;
+            let last = tokens.pop().expect("a token exists past a word start");
+            let word_start = last.start;
+            let word = last.text;
+            let argv: Vec<String> = tokens.into_iter().map(|t| t.text).collect();
+            (word_start, word, argv.len(), argv)
+        }
+    }
+
+    /// The dynamic request the current buffer state would issue (used
+    /// both when spawning and when checking whether a late answer
+    /// still matches what is on screen).
+    fn current_dynamic_request(&self) -> Option<crate::completion::DynamicRequest> {
+        let (word_start, word, word_idx, argv) = self.token_context();
+        match crate::completion::route(
+            &argv,
+            word_idx,
+            &word,
+            word_start,
+            &self.aliases,
+            self.session_ssh_host.as_deref(),
+        ) {
+            crate::completion::Route::Dynamic(request) => Some(request),
+            _ => None,
+        }
+    }
+
+    /// Answer a dynamic route: serve from cache, else spawn the query
+    /// (replacing any older in-flight one) and consume the Tab
+    /// silently — the row fills when the answer arrives.
+    fn start_dynamic(
+        &mut self,
+        request: crate::completion::DynamicRequest,
+        word_start: usize,
+        word: &str,
+    ) {
+        let key = request.key();
+
+        if let Some(entry) = self.dynamic_cache.get(&key) {
+            let (at, candidates, no_space) = entry;
+            if at.elapsed() < DYNAMIC_CACHE_TTL {
+                self.apply_candidates_at(candidates.clone(), word_start, word, *no_space);
+                return;
+            }
+            self.dynamic_cache.remove(&key);
+        }
+
+        // Already in flight with the same key — just wait for it.
+        if self.pending.as_ref().is_some_and(|p| p.key == key) {
             return;
         }
 
-        let candidates = crate::completion::gather(word_start, &word, sources);
+        self.pending = Some(PendingDynamic {
+            key,
+            rx: crate::completion::spawn_dynamic(request),
+        });
+        self.prune_dynamic_cache();
+    }
+
+    /// Non-blocking check on the in-flight query. The result applies
+    /// only when the buffer still sits at the exact state that issued
+    /// the request — typing meanwhile invalidates the answer.
+    pub fn poll_dynamic(&mut self) {
+        let Some(pending) = self.pending.take() else {
+            return;
+        };
+        let Ok(result) = pending.rx.try_recv() else {
+            self.pending = Some(pending); // still running — keep waiting
+            return;
+        };
+        if self.masked || self.preedit.is_some() {
+            return;
+        }
+        let Some(request) = self.current_dynamic_request() else {
+            return;
+        };
+        if request.key() != pending.key {
+            return;
+        }
+        self.cache_dynamic(&pending.key, &result);
+        let (word_start, word, _, _) = self.token_context();
+        self.apply_candidates_at(result.candidates, word_start, &word, result.no_space);
+    }
+
+    fn cache_dynamic(&mut self, key: &str, result: &crate::completion::DynamicResult) {
+        self.dynamic_cache.insert(
+            key.to_string(),
+            (Instant::now(), result.candidates.clone(), result.no_space),
+        );
+        self.prune_dynamic_cache();
+    }
+
+    /// Expire stale entries; drop everything when the map outgrows a
+    /// sane bound (burst queries) — re-querying is cheap relative to
+    /// unbounded growth.
+    fn prune_dynamic_cache(&mut self) {
+        self.dynamic_cache
+            .retain(|_, (at, _, _)| at.elapsed() < DYNAMIC_CACHE_TTL);
+        if self.dynamic_cache.len() > 128 {
+            self.dynamic_cache.clear();
+        }
+    }
+
+    /// Shared candidate application: single candidate inserts (space
+    /// unless dir/no-space), several share the common prefix and open
+    /// the cycle menu. The dynamic poll path reuses this.
+    fn apply_candidates_at(
+        &mut self,
+        candidates: Vec<crate::completion::Candidate>,
+        word_start: usize,
+        word: &str,
+        no_space: bool,
+    ) {
         match candidates.len() {
             0 => {}
             1 => {
                 let mut insert = candidates[0].insert.clone();
-                if !candidates[0].is_dir {
+                if !candidates[0].is_dir && !no_space {
                     insert.push(' ');
                 }
                 self.apply_word(word_start, &insert);
@@ -477,18 +696,6 @@ impl InputBar {
         self.buffer.replace_range(from..to, word);
         self.cursor = word_start + word.chars().count();
         self.view_start = 0;
-    }
-
-    /// The whitespace-delimited word ending at the cursor: its first
-    /// char index and text. Empty when the cursor sits at a word start.
-    fn word_before_cursor(&self) -> (usize, String) {
-        let chars: Vec<char> = self.buffer.chars().collect();
-        let cursor = self.cursor.min(chars.len());
-        let mut start = cursor;
-        while start > 0 && !chars[start - 1].is_whitespace() {
-            start -= 1;
-        }
-        (start, chars[start..cursor].iter().collect())
     }
 
     fn char_count(&self) -> usize {
@@ -733,6 +940,10 @@ impl InputBar {
             // Immediate mode: not drawing == not visible.
             return;
         }
+
+        // A dynamic query may have finished since the last frame; its
+        // answer fills the candidates row while the buffer is intact.
+        self.poll_dynamic();
 
         let (window_width, window_height, scale_factor) = dimensions;
         let logical_width = window_width / scale_factor;
@@ -1273,10 +1484,10 @@ mod tests {
         bar.set_preedit(None);
         assert_eq!(bar.suggestion.as_deref(), Some("ho hi"));
 
-        bar.set_options(true, false);
+        bar.set_options(true, false, true, std::collections::HashMap::new());
         assert_eq!(bar.suggestion, None, "config switch off");
         assert!(bar.records_history());
-        bar.set_options(false, true);
+        bar.set_options(false, true, true, std::collections::HashMap::new());
         assert!(!bar.records_history());
         assert_eq!(bar.suggestion.as_deref(), Some("ho hi"));
     }
@@ -1333,6 +1544,7 @@ mod tests {
                 path_dirs: vec![self.0.clone()],
                 home: None,
                 cwd,
+                session_ssh_host: None,
             }
         }
     }
@@ -1580,5 +1792,136 @@ mod tests {
         assert_eq!(bar.suggestion, None, "no ghost over a secret");
         bar.insert_text("s");
         assert_eq!(bar.suggestion, None);
+    }
+
+    // ---- Dynamic completion (`__complete` protocol / ssh) ----
+
+    fn get_pod_request() -> crate::completion::DynamicRequest {
+        crate::completion::DynamicRequest::Cobra {
+            tool: "kubectl".into(),
+            args: vec!["get".into(), "pod".into()],
+            word: String::new(),
+            host: None,
+        }
+    }
+
+    /// Pre-load a finished dynamic answer, as if the worker had been
+    /// spawned at Tab time and resolved while the user waited.
+    fn feed_dynamic(
+        bar: &mut InputBar,
+        request: crate::completion::DynamicRequest,
+        result: crate::completion::DynamicResult,
+    ) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(result).unwrap();
+        bar.pending = Some(PendingDynamic {
+            key: request.key(),
+            rx,
+        });
+    }
+
+    fn pods_result(
+        candidates: &[&str],
+        no_space: bool,
+    ) -> crate::completion::DynamicResult {
+        crate::completion::DynamicResult {
+            candidates: candidates
+                .iter()
+                .map(|name| crate::completion::Candidate {
+                    display: (*name).to_string(),
+                    insert: (*name).to_string(),
+                    is_dir: false,
+                })
+                .collect(),
+            no_space,
+        }
+    }
+
+    #[test]
+    fn dynamic_answer_opens_the_cycle_menu() {
+        let mut bar = InputBar::new(true);
+        bar.insert_text("kubectl get pod ");
+        feed_dynamic(
+            &mut bar,
+            get_pod_request(),
+            pods_result(&["my-app-1", "my-app-2"], false),
+        );
+
+        bar.poll_dynamic();
+        assert_eq!(
+            bar.buffer, "kubectl get pod my-app-",
+            "the LCP lands first, menu opens"
+        );
+        let state = bar.completion.as_ref().unwrap();
+        assert_eq!(state.index, state.candidates.len(), "menu not started yet");
+
+        // Cycling works exactly like static completion from here.
+        bar.tab_complete(&empty_sources());
+        assert_eq!(bar.buffer, "kubectl get pod my-app-1");
+        bar.tab_complete(&empty_sources());
+        assert_eq!(bar.buffer, "kubectl get pod my-app-2");
+    }
+
+    #[test]
+    fn dynamic_single_candidate_space_and_no_space() {
+        let mut bar = InputBar::new(true);
+        bar.insert_text("kubectl get pod ");
+        feed_dynamic(&mut bar, get_pod_request(), pods_result(&["cache"], false));
+        bar.poll_dynamic();
+        assert_eq!(bar.buffer, "kubectl get pod cache ");
+
+        // `:2` directive — flag values must not gain a trailing space.
+        let mut bar = InputBar::new(true);
+        bar.insert_text("kubectl get pod ");
+        feed_dynamic(&mut bar, get_pod_request(), pods_result(&["cache"], true));
+        bar.poll_dynamic();
+        assert_eq!(bar.buffer, "kubectl get pod cache");
+    }
+
+    #[test]
+    fn dynamic_answer_from_a_stale_buffer_is_dropped() {
+        let mut bar = InputBar::new(true);
+        bar.insert_text("kubectl get pod ");
+        feed_dynamic(
+            &mut bar,
+            get_pod_request(),
+            pods_result(&["my-app-1", "my-app-2"], false),
+        );
+
+        // The user kept typing after the Tab: the answer no longer
+        // matches the live request.
+        bar.insert_text("x");
+        bar.poll_dynamic();
+        assert_eq!(bar.buffer, "kubectl get pod x", "nothing applied");
+        assert!(bar.completion.is_none());
+    }
+
+    #[test]
+    fn dynamic_is_silent_until_the_worker_answers() {
+        let mut bar = InputBar::new(true);
+        bar.insert_text("kubectl get pod ");
+        // No pending seeded, nothing in flight: poll must not act.
+        bar.poll_dynamic();
+        assert_eq!(bar.buffer, "kubectl get pod ");
+        assert!(bar.completion.is_none());
+    }
+
+    #[test]
+    fn dynamic_suppressed_while_masked() {
+        let mut bar = InputBar::new(true);
+        bar.insert_text("kubectl get pod ");
+        bar.set_masked(true);
+        feed_dynamic(&mut bar, get_pod_request(), pods_result(&["cache"], false));
+        bar.poll_dynamic();
+        assert_eq!(bar.buffer, "kubectl get pod ", "no completion over secrets");
+    }
+
+    fn empty_sources() -> crate::completion::Sources {
+        crate::completion::Sources {
+            path_dirs: Vec::new(),
+            home: None,
+            cwd: None,
+            session_ssh_host: None,
+        }
     }
 }

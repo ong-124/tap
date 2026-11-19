@@ -589,6 +589,8 @@ impl Screen<'_> {
         old_input_bar.set_options(
             config.input_bar.record_history,
             config.input_bar.suggestions,
+            config.input_bar.dynamic_completion,
+            config.input_bar.command_aliases.clone(),
         );
         self.renderer.input_bar = old_input_bar;
         // Bar size follows the (possibly new) font metrics, and the
@@ -1102,6 +1104,11 @@ impl Screen<'_> {
             return false;
         }
 
+        // Pick up finished dynamic completions on every keystroke: a
+        // Tab press may have gone out seconds before the cluster
+        // answered, and the next key delivers the candidates.
+        self.renderer.input_bar.poll_dynamic();
+
         // Backspace family in every modifier shape the default
         // bindings otherwise claim: plain/Shift delete a char,
         // Ctrl/Alt delete the word before the cursor (readline).
@@ -1235,18 +1242,36 @@ impl Screen<'_> {
     }
 
     /// Build the completion environment (PATH from tap, home, and the
-    /// focused pane's cwd) and run a Tab press through the bar.
+    /// focused pane's cwd) and run a Tab press through the bar. An ssh
+    /// session detected in the pane's foreground process routes remote
+    /// completion at that host.
     fn input_bar_tab_complete(&mut self) {
         #[cfg(not(target_os = "windows"))]
-        let cwd = {
+        let (cwd, ssh_session_host) = {
             let current = self.context_manager.current();
-            teletypewriter::foreground_process_path(*current.main_fd, current.shell_pid)
-                .ok()
+            let cmdline = teletypewriter::foreground_process_cmdline(
+                *current.main_fd,
+                current.shell_pid,
+            )
+            .ok();
+            let host = cmdline
+                .and_then(|argv| crate::completion::ssh_route(&argv))
+                .map(|route| route.dest);
+            (
+                teletypewriter::foreground_process_path(
+                    *current.main_fd,
+                    current.shell_pid,
+                )
+                .ok(),
+                host,
+            )
         };
         #[cfg(target_os = "windows")]
-        let cwd = None;
+        let (cwd, ssh_session_host) = (None, None);
 
-        let sources = crate::completion::Sources::from_env(cwd);
+        let mut sources = crate::completion::Sources::from_env(cwd);
+        sources.session_ssh_host = ssh_session_host;
+        self.renderer.input_bar.poll_dynamic();
         self.renderer.input_bar.tab_complete(&sources);
     }
 

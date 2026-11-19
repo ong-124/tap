@@ -1087,10 +1087,7 @@ pub fn foreground_process_path(
     main_fd: RawFd,
     shell_pid: u32,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let mut pid = unsafe { libc::tcgetpgrp(main_fd) };
-    if pid < 0 {
-        pid = shell_pid as libc::pid_t;
-    }
+    let pid = foreground_process_pid(main_fd, shell_pid);
 
     #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
     let link_path = format!("/proc/{pid}/cwd");
@@ -1104,6 +1101,55 @@ pub fn foreground_process_path(
     let cwd = macos_cwd(pid)?;
 
     Ok(cwd)
+}
+
+/// The foreground process group leader's pid (falls back to the shell
+/// when the terminal reports none).
+fn foreground_process_pid(main_fd: RawFd, shell_pid: u32) -> libc::pid_t {
+    let mut pid = unsafe { libc::tcgetpgrp(main_fd) };
+    if pid < 0 {
+        pid = shell_pid as libc::pid_t;
+    }
+    pid
+}
+
+/// The foreground process's argv (`["ssh", "-p", "2222", "host"]`).
+/// Linux/FreeBSD read `/proc`; macOS has no procfs, so `ps` answers.
+/// Used to detect an in-pane ssh session for remote completion.
+pub fn foreground_process_cmdline(
+    main_fd: RawFd,
+    shell_pid: u32,
+) -> std::io::Result<Vec<String>> {
+    let pid = foreground_process_pid(main_fd, shell_pid);
+
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+    {
+        let raw = std::fs::read(format!("/proc/{pid}/cmdline"))?;
+        Ok(raw
+            .split(|b| *b == 0)
+            .filter(|part| !part.is_empty())
+            .map(|part| String::from_utf8_lossy(part).into_owned())
+            .collect())
+    }
+
+    #[cfg(target_os = "freebsd")]
+    {
+        let raw = std::fs::read(format!("/compat/linux/proc/{pid}/cmdline"))?;
+        Ok(raw
+            .split(|b| *b == 0)
+            .filter(|part| !part.is_empty())
+            .map(|part| String::from_utf8_lossy(part).into_owned())
+            .collect())
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "command="])
+            .output()?;
+        let line = String::from_utf8_lossy(&output.stdout);
+        Ok(line.split_whitespace().map(String::from).collect())
+    }
 }
 
 /// Start a new process in the background.

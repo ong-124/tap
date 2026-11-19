@@ -65,7 +65,7 @@ impl Serialize for SizeSpec {
 /// centered horizontally; `height` reserves terminal layout space and
 /// falls back to six terminal lines (text at twice the terminal font)
 /// when unset.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InputBarConfig {
     #[serde(default = "default_width")]
     pub width: SizeSpec,
@@ -80,6 +80,17 @@ pub struct InputBarConfig {
     /// after the caret, accepted with → / End.
     #[serde(default = "default_bool_true")]
     pub suggestions: bool,
+    /// Dynamic (context-aware) completion: spawn the Cobra
+    /// `__complete` protocol for kubectl & co, and answer ssh
+    /// destination slots from `~/.ssh/config` / known_hosts (remote
+    /// queries included). Static command/path completion is unaffected
+    /// by this switch.
+    #[serde(default = "default_bool_true", rename = "dynamic-completion")]
+    pub dynamic_completion: bool,
+    /// Alias → real command mapping used only for dynamic completion
+    /// routing (`k = "kubectl"` makes `k get pod<Tab>` query kubectl).
+    #[serde(default, rename = "command-aliases")]
+    pub command_aliases: std::collections::HashMap<String, String>,
 }
 
 impl Default for InputBarConfig {
@@ -89,6 +100,8 @@ impl Default for InputBarConfig {
             height: None,
             record_history: default_bool_true(),
             suggestions: default_bool_true(),
+            dynamic_completion: default_bool_true(),
+            command_aliases: std::collections::HashMap::new(),
         }
     }
 }
@@ -166,16 +179,48 @@ mod tests {
         let config = toml::from_str::<Config>("[input_bar]").unwrap();
         assert!(config.input_bar.record_history);
         assert!(config.input_bar.suggestions);
+        assert!(config.input_bar.dynamic_completion);
+        assert!(config.input_bar.command_aliases.is_empty());
 
         let config = toml::from_str::<Config>(
             r#"
             [input_bar]
             record-history = false
             suggestions = false
+            dynamic-completion = false
             "#,
         )
         .unwrap();
         assert!(!config.input_bar.record_history);
         assert!(!config.input_bar.suggestions);
+        assert!(!config.input_bar.dynamic_completion);
+    }
+
+    #[test]
+    fn command_aliases_parse_kebab_section() {
+        let config = toml::from_str::<Config>(
+            r#"
+            [input_bar.command-aliases]
+            k = "kubectl"
+            h = "helm"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            config
+                .input_bar
+                .command_aliases
+                .get("k")
+                .map(String::as_str),
+            Some("kubectl")
+        );
+        assert_eq!(
+            config
+                .input_bar
+                .command_aliases
+                .get("h")
+                .map(String::as_str),
+            Some("helm")
+        );
     }
 }

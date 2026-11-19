@@ -352,6 +352,8 @@ impl Renderer {
                 bar.set_options(
                     config.input_bar.record_history,
                     config.input_bar.suggestions,
+                    config.input_bar.dynamic_completion,
+                    config.input_bar.command_aliases.clone(),
                 );
                 bar
             },
