@@ -61,7 +61,7 @@
   - 依赖清单清理：根 workspace 删 6 个无成员引用的依赖（frontends/wasm 非成员、版本就地内联）；rioterm `wgpu` 改 optional 挂 `wgpu` feature；sugarloaf 删 5 个未用依赖、`futures/rayon/thiserror` 挂 `wgpu` feature；librio-wasm 依赖移入 wasm32 target 表；rioterm 删 `lru`/`futures`
   - 验证：默认构建与 `--features wgpu` 构建均 0 警告；rio-backend 228 / rioterm 332 / teletypewriter 17 测试通过
 - [x] 【已完成】输入栏密码密文模式（[详情](task/20261119-1724_输入栏密码密文模式.md)）
-  - 自动检测：击键/粘贴进缓冲前 `tcgetattr(main_fd)` 读 PTY `ECHO` 标志（teletypewriter 新增 `echo_enabled`，探测失败读作开启），关闭即 sudo/ssh 口令提示 → 自动密文；无后台轮询线程
+  - 自动检测：击键/粘贴进缓冲前 `tcgetattr(main_fd)` 读 PTY 线路规程，teletypewriter `secret_prompt_expected`——「`ECHO` 关 + `ICANON` 开」= 口令提示（sudo/ssh/`read -s`）→ 自动密文；行编辑器（zsh ZLE/readline）raw 模式不误掩码（修复轮次一：首轮仅判 ECHO 导致正常提示符全变 `•`）；探测失败不掩码，无后台轮询线程
   - 密文行为：字符画 `•`、压制虚化预选与 Tab 补全；sticky——回显中途恢复不解除，仅随行生命周期复位（提交/Ctrl+C 清空/载入历史条目）；↑ 载入历史解除密文、↓ 回 draft 按 `draft_masked` 恢复
-  - 历史跳过：内存历史（take_submitted_line）与持久历史库（submit 侧显式 `!was_masked`，防密码恰同末条历史被相邻去重放过）双重拦截
-  - 验证：teletypewriter 17（+echo 探测测试）/ rioterm 336（+4 密文单测）通过，clippy/fmt 干净，待用户手测（sudo/ssh 口令显 `•`、历史库无密码残留、普通命令不受影响）
+  - 历史跳过：内存历史（take_submitted_line）与持久历史库（submit 侧显式 `!was_masked`，防密码恰同末条历史被相邻去重放过）双重拦截；ssh 会话内远程口令、raw 模式读口令等无信号场景不掩码为已知边界
+  - 验证：teletypewriter 17（+规程探测测试）/ rioterm 336（+4 密文单测）通过，clippy/fmt 干净，待用户手测（正常提示符不再误掩码、sudo/ssh 本机口令显 `•`、历史库无密码残留）
