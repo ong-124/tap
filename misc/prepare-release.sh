@@ -42,20 +42,20 @@ fi
 # Workspace version plus every path dependency pinned to it. Only
 # lines that declare the workspace version or a path dep are touched,
 # so a third-party crate that happens to share the version string can
-# never be rewritten. librio names rio-vt by path in its own manifest
+# never be rewritten. libtap names tap-vt by path in its own manifest
 # (it turns the default features off, which a workspace dependency
 # cannot), so its pin moves with the rest.
 CUR="$current" NEW="$version" perl -pi -e \
     's/version = "\Q$ENV{CUR}\E"/version = "$ENV{NEW}"/ if /^version = / || /path = /' \
-    Cargo.toml librio/Cargo.toml
+    Cargo.toml libtap/Cargo.toml
 cargo update --workspace --quiet
 
 # AppStream metainfo: newest release first, right under <releases>.
-metainfo="misc/com.rioterm.Rio.metainfo.xml"
+metainfo="misc/com.tapterm.Tap.metainfo.xml"
 if grep -q "release version=\"$version\"" "$metainfo"; then
     echo "metainfo already has $version, leaving it as is"
 else
-    NEW="$version" TODAY="$release_date" perl -pi -e 'print qq(    <release version="$ENV{NEW}" date="$ENV{TODAY}">\n      <url type="details">https://github.com/raphamorim/rio/releases/tag/v$ENV{NEW}</url>\n    </release>\n) if $. == $insert_line; $insert_line = $. + 1 if /^  <releases>$/' "$metainfo"
+    NEW="$version" TODAY="$release_date" perl -pi -e 'print qq(    <release version="$ENV{NEW}" date="$ENV{TODAY}">\n      <url type="details">https://github.com/raphamorim/tap/releases/tag/v$ENV{NEW}</url>\n    </release>\n) if $. == $insert_line; $insert_line = $. + 1 if /^  <releases>$/' "$metainfo"
     grep -q "release version=\"$version\"" "$metainfo" || {
         echo "error: failed to insert the metainfo release entry" >&2
         exit 1

@@ -2463,37 +2463,37 @@ dependencies = [
 ]
 
 [[package]]
-name = "librio"
+name = "libsugarloaf"
+version = "0.6.0"
+dependencies = [
+ "libtap",
+ "raw-window-handle",
+ "sugarloaf",
+ "tap-grid",
+ "tap-vt",
+]
+
+[[package]]
+name = "libtap"
 version = "0.6.0"
 dependencies = [
  "bitflags 2.13.2",
  "corcovado",
- "rio-fonts",
- "rio-graphics",
- "rio-vt",
  "rustc-hash 2.1.3",
+ "tap-fonts",
+ "tap-graphics",
+ "tap-vt",
  "teletypewriter",
  "tracing",
 ]
 
 [[package]]
-name = "librio-wasm"
+name = "libtap-wasm"
 version = "0.6.0"
 dependencies = [
  "js-sys",
- "librio",
+ "libtap",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "libsugarloaf"
-version = "0.6.0"
-dependencies = [
- "librio",
- "raw-window-handle",
- "rio-grid",
- "rio-vt",
- "sugarloaf",
 ]
 
 [[package]]
@@ -3830,201 +3830,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
-name = "rio-backend"
-version = "0.6.0"
-dependencies = [
- "base64",
- "dirs",
- "onig",
- "regex",
- "rio-graphics",
- "rio-vt",
- "rio-window",
- "serde",
- "sugarloaf",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
- "wgpu",
-]
-
-[[package]]
-name = "rio-fonts"
-version = "0.6.0"
-
-[[package]]
-name = "rio-grapheme-width"
-version = "0.6.0"
-dependencies = [
- "phf",
- "ucd-trie",
-]
-
-[[package]]
-name = "rio-graphics"
-version = "0.6.0"
-dependencies = [
- "image",
- "parking_lot",
- "rustc-hash 2.1.3",
- "skrifa 0.37.0",
- "tracing",
- "web-time",
- "wgpu",
-]
-
-[[package]]
-name = "rio-grid"
-version = "0.6.0"
-dependencies = [
- "rapidhash",
- "rio-backend",
- "rio-unicode",
- "rustc-hash 2.1.3",
- "smallvec",
-]
-
-[[package]]
-name = "rio-unicode"
-version = "0.6.0"
-dependencies = [
- "unicode-segmentation",
- "unicode-width-16",
-]
-
-[[package]]
-name = "rio-vt"
-version = "0.6.0"
-dependencies = [
- "base64",
- "bitflags 2.13.2",
- "copypasta",
- "corcovado",
- "criterion",
- "cursor-icon",
- "flate2",
- "image",
- "libc",
- "memchr",
- "parking_lot",
- "raw-window-handle",
- "regex",
- "regex-automata",
- "rio-grapheme-width",
- "rio-graphics",
- "rio-unicode",
- "rio-window",
- "rustc-hash 2.1.3",
- "serde",
- "simdutf",
- "smallvec",
- "sugarloaf",
- "teletypewriter",
- "tracing",
- "web-time",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "rio-window"
-version = "0.6.0"
-dependencies = [
- "ahash",
- "atomic-waker",
- "bindgen 0.70.1",
- "bitflags 2.13.2",
- "block2 0.5.1",
- "bytemuck",
- "calloop 0.13.0",
- "cfg_aliases",
- "concurrent-queue",
- "console_error_panic_hook",
- "core-foundation 0.10.1",
- "core-graphics 0.24.0",
- "cursor-icon",
- "dpi",
- "image",
- "js-sys",
- "libc",
- "memmap2",
- "objc-rs 0.3.2",
- "objc2 0.5.3",
- "objc2-app-kit 0.2.2",
- "objc2-foundation 0.2.2",
- "objc2-user-notifications",
- "orbclient",
- "percent-encoding",
- "pin-project",
- "raw-window-handle",
- "redox_syscall 0.4.1",
- "rustix 0.38.44",
- "sctk-adwaita",
- "smithay-client-toolkit 0.19.2",
- "smol_str",
- "softbuffer",
- "tracing",
- "tracing-subscriber",
- "tracing-web",
- "unicode-segmentation",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols",
- "wayland-protocols-plasma",
- "web-sys",
- "web-time",
- "windows 0.62.2",
- "windows-sys 0.59.0",
- "x11-dl",
- "x11rb",
- "xkbcommon-dl",
- "zbus",
-]
-
-[[package]]
-name = "rioterm"
-version = "0.6.0"
-dependencies = [
- "ahash",
- "base64",
- "bitflags 2.13.2",
- "cfg_aliases",
- "clap",
- "corcovado",
- "cpal",
- "dirs",
- "dunce",
- "global-hotkey",
- "image",
- "libc",
- "notify",
- "objc-rs 0.3.2",
- "onig",
- "onig_sys",
- "parking_lot",
- "rapidhash",
- "raw-window-handle",
- "regex",
- "rio-backend",
- "rio-grid",
- "rio-unicode",
- "rio-window",
- "rustc-hash 2.1.3",
- "serde",
- "smallvec",
- "sugarloaf",
- "taffy",
- "teletypewriter",
- "tinyvec",
- "tracing",
- "tracing-subscriber",
- "url",
- "wgpu",
- "windows-sys 0.60.2",
- "winres",
-]
-
-[[package]]
 name = "rspirv"
 version = "0.13.0+sdk-1.4.341.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4554,16 +4359,16 @@ dependencies = [
  "png 0.17.16",
  "raw-window-handle",
  "rayon",
- "rio-fonts",
- "rio-graphics",
- "rio-unicode",
- "rio-window",
  "rustc-hash 2.1.3",
  "serde",
  "skrifa 0.37.0",
  "smallvec",
  "softbuffer",
  "swash",
+ "tap-fonts",
+ "tap-graphics",
+ "tap-unicode",
+ "tap-window",
  "thiserror 2.0.21",
  "tiny-skia 0.12.0",
  "tracing",
@@ -4636,6 +4441,201 @@ dependencies = [
  "grid",
  "serde",
  "slotmap",
+]
+
+[[package]]
+name = "tap-backend"
+version = "0.6.0"
+dependencies = [
+ "base64",
+ "dirs",
+ "onig",
+ "regex",
+ "serde",
+ "sugarloaf",
+ "tap-graphics",
+ "tap-vt",
+ "tap-window",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+ "wgpu",
+]
+
+[[package]]
+name = "tap-fonts"
+version = "0.6.0"
+
+[[package]]
+name = "tap-grapheme-width"
+version = "0.6.0"
+dependencies = [
+ "phf",
+ "ucd-trie",
+]
+
+[[package]]
+name = "tap-graphics"
+version = "0.6.0"
+dependencies = [
+ "image",
+ "parking_lot",
+ "rustc-hash 2.1.3",
+ "skrifa 0.37.0",
+ "tracing",
+ "web-time",
+ "wgpu",
+]
+
+[[package]]
+name = "tap-grid"
+version = "0.6.0"
+dependencies = [
+ "rapidhash",
+ "rustc-hash 2.1.3",
+ "smallvec",
+ "tap-backend",
+ "tap-unicode",
+]
+
+[[package]]
+name = "tap-unicode"
+version = "0.6.0"
+dependencies = [
+ "unicode-segmentation",
+ "unicode-width-16",
+]
+
+[[package]]
+name = "tap-vt"
+version = "0.6.0"
+dependencies = [
+ "base64",
+ "bitflags 2.13.2",
+ "copypasta",
+ "corcovado",
+ "criterion",
+ "cursor-icon",
+ "flate2",
+ "image",
+ "libc",
+ "memchr",
+ "parking_lot",
+ "raw-window-handle",
+ "regex",
+ "regex-automata",
+ "rustc-hash 2.1.3",
+ "serde",
+ "simdutf",
+ "smallvec",
+ "sugarloaf",
+ "tap-grapheme-width",
+ "tap-graphics",
+ "tap-unicode",
+ "tap-window",
+ "teletypewriter",
+ "tracing",
+ "web-time",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tap-window"
+version = "0.6.0"
+dependencies = [
+ "ahash",
+ "atomic-waker",
+ "bindgen 0.70.1",
+ "bitflags 2.13.2",
+ "block2 0.5.1",
+ "bytemuck",
+ "calloop 0.13.0",
+ "cfg_aliases",
+ "concurrent-queue",
+ "console_error_panic_hook",
+ "core-foundation 0.10.1",
+ "core-graphics 0.24.0",
+ "cursor-icon",
+ "dpi",
+ "image",
+ "js-sys",
+ "libc",
+ "memmap2",
+ "objc-rs 0.3.2",
+ "objc2 0.5.3",
+ "objc2-app-kit 0.2.2",
+ "objc2-foundation 0.2.2",
+ "objc2-user-notifications",
+ "orbclient",
+ "percent-encoding",
+ "pin-project",
+ "raw-window-handle",
+ "redox_syscall 0.4.1",
+ "rustix 0.38.44",
+ "sctk-adwaita",
+ "smithay-client-toolkit 0.19.2",
+ "smol_str",
+ "softbuffer",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-web",
+ "unicode-segmentation",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-plasma",
+ "web-sys",
+ "web-time",
+ "windows 0.62.2",
+ "windows-sys 0.59.0",
+ "x11-dl",
+ "x11rb",
+ "xkbcommon-dl",
+ "zbus",
+]
+
+[[package]]
+name = "tapterm"
+version = "0.6.0"
+dependencies = [
+ "ahash",
+ "base64",
+ "bitflags 2.13.2",
+ "cfg_aliases",
+ "clap",
+ "corcovado",
+ "cpal",
+ "dirs",
+ "dunce",
+ "global-hotkey",
+ "image",
+ "libc",
+ "notify",
+ "objc-rs 0.3.2",
+ "onig",
+ "onig_sys",
+ "parking_lot",
+ "rapidhash",
+ "raw-window-handle",
+ "regex",
+ "rustc-hash 2.1.3",
+ "serde",
+ "smallvec",
+ "sugarloaf",
+ "taffy",
+ "tap-backend",
+ "tap-grid",
+ "tap-unicode",
+ "tap-window",
+ "teletypewriter",
+ "tinyvec",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "wgpu",
+ "windows-sys 0.60.2",
+ "winres",
 ]
 
 [[package]]

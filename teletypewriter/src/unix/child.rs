@@ -511,7 +511,7 @@ mod tests {
 
     #[test]
     fn failed_spawn_closes_pty_descriptors() {
-        const ISOLATED: &str = "RIO_TEST_FAILED_PTY_SPAWN";
+        const ISOLATED: &str = "TAP_TEST_FAILED_PTY_SPAWN";
         if std::env::var_os(ISOLATED).is_none() {
             // Descriptor counts are process-wide, so run outside parallel tests.
             let status = Command::new(std::env::current_exe().unwrap())
@@ -527,7 +527,7 @@ mod tests {
         }
         let failed_spawn = || {
             create_pty_with_spawn(
-                Some("/definitely-missing-rio-test-shell"),
+                Some("/definitely-missing-tap-test-shell"),
                 vec![],
                 &None,
                 None,

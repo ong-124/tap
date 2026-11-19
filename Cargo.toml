@@ -3,17 +3,17 @@ members = [
     "sugarloaf",
     "teletypewriter",
     "corcovado",
-    "rio-graphics",
-    "rio-fonts",
-    "rio-vt",
-    "rio-backend",
-    "rio-grapheme-width",
-    "rio-unicode",
-    "rio-window",
-    "rio-grid",
-    "frontends/rioterm",
-    "librio",
-    "librio-wasm",
+    "tap-graphics",
+    "tap-fonts",
+    "tap-vt",
+    "tap-backend",
+    "tap-grapheme-width",
+    "tap-unicode",
+    "tap-window",
+    "tap-grid",
+    "frontends/tapterm",
+    "libtap",
+    "libtap-wasm",
     "libsugarloaf",
 ]
 resolver = "2"
@@ -25,23 +25,23 @@ edition = "2021"
 license = "MIT"
 keywords = ["graphics", "terminal", "application"]
 rust-version = "1.100.0"
-repository = "https://github.com/raphamorim/rio"
-homepage = "https://rioterm.com"
-documentation = "https://github.com/raphamorim/rio#readme"
+repository = "https://github.com/raphamorim/tap"
+homepage = "https://tapterm.com"
+documentation = "https://github.com/raphamorim/tap#readme"
 readme = "README.md"
 
 [workspace.dependencies]
 teletypewriter = { path = "teletypewriter", version = "0.6.0" }
-rio-backend = { path = "rio-backend", version = "0.6.0" }
-rio-window = { path = "rio-window", version = "0.6.0", default-features = false }
-rio-grapheme-width = { path = "rio-grapheme-width", version = "0.6.0" }
+tap-backend = { path = "tap-backend", version = "0.6.0" }
+tap-window = { path = "tap-window", version = "0.6.0", default-features = false }
+tap-grapheme-width = { path = "tap-grapheme-width", version = "0.6.0" }
 sugarloaf = { path = "sugarloaf", version = "0.6.0" }
 corcovado = { path = "corcovado", version = "0.6.0" }
-rio-graphics = { path = "rio-graphics", version = "0.6.0" }
-rio-fonts = { path = "rio-fonts", version = "0.6.0" }
-rio-vt = { path = "rio-vt", version = "0.6.0" }
-rio-grid = { path = "rio-grid", version = "0.6.0" }
-rio-unicode = { path = "rio-unicode", version = "0.6.0" }
+tap-graphics = { path = "tap-graphics", version = "0.6.0" }
+tap-fonts = { path = "tap-fonts", version = "0.6.0" }
+tap-vt = { path = "tap-vt", version = "0.6.0" }
+tap-grid = { path = "tap-grid", version = "0.6.0" }
+tap-unicode = { path = "tap-unicode", version = "0.6.0" }
 
 raw-window-handle = { version = "0.6.2", features = ["std"] }
 parking_lot = { version = "0.12.5", features = [
@@ -90,7 +90,7 @@ panic = "abort"             # reduces binary size by ~50% in combination with -Z
 codegen-units = 1
 incremental = false
 
-[profile.librio]
+[profile.libtap]
 inherits = "release"
 strip = "none"
 debug = false

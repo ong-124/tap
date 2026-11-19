@@ -1,0 +1,36 @@
+name: libtap
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'libtap/**'
+      - 'tap-vt/**'
+      - 'teletypewriter/**'
+      - '.github/workflows/libtap.yml'
+  pull_request:
+    paths:
+      - 'libtap/**'
+      - 'tap-vt/**'
+      - 'teletypewriter/**'
+      - '.github/workflows/libtap.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+
+jobs:
+  libtap:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: Swatinem/rust-cache@v2
+      - run: rustup toolchain install stable --profile minimal
+      - run: cargo test -p libtap
+      - run: make libtap-ctest
+      - if: github.ref == 'refs/heads/main'
+        run: make libtap-xcframework

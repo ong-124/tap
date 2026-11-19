@@ -1,13 +1,13 @@
 # tap 任务清单
 
-基于 rio fork 的终端项目改造任务。状态以【状态词】为准：待开始 / 进行中 / 已完成 / 放弃。
+基于 tap fork 的终端项目改造任务。状态以【状态词】为准：待开始 / 进行中 / 已完成 / 放弃。
 
 - [x] 【已完成】Warp 式底部统一输入框（[详情](task/20261118-1941_Warp式底部统一输入框.md)）
   - 输入栏 UI 与渲染层（底部固定栏，sugarloaf）：input_bar.rs（❯ 提示符 + 闪烁 caret + 超宽横向滚动 + 锁定态变暗提示文案），margin.bottom 预留 36px，终端行数自动减少、不遮挡末行
   - 输入缓冲与编辑（光标移动、历史记录）：Left/Right/Home/End/Backspace/Delete、Ctrl+W（bash rubout）/Ctrl+U；↑/↓ 历史（容量 255、相邻去重、编辑即分叉）；IME preedit ghost（下划线跟随）与粘贴进缓冲
   - 提交发送整行命令到 PTY：Enter 整行+\r 经 send_write；Ctrl+C/D/Z/L 等控制组合直通（Ctrl+C 同时清空输入栏缓冲）；Tab/Escape 直通（已知限制）
   - 可配置启用/禁用（保留传统直接输入模式）：enable-input-bar（默认 true，支持热重载 take/restore 不丢输入）；智能路由仅按 ALT_SCREEN 锁定（20261119-1654 修复轮次八：仅 vim/nano/less/tmux 等全屏编辑类程序锁定直通，SSH 会话与命令运行期输入栏保持可用——原 OSC 133 zone 判定在 SSH 下因远程无标记永锁，zone 机制已移除）
-  - 验证：rio-vt 695 / rio-backend 222 / rioterm 305 测试通过，clippy/fmt 干净；修复轮次八后 rio-vt 694 / rioterm 332 通过；待用户手测（zsh 命令流与历史、vim/less 锁定切换、中文 IME、多 split 焦点跟随、ssh 会话输入栏可用）
+  - 验证：tap-vt 695 / tap-backend 222 / tapterm 305 测试通过，clippy/fmt 干净；修复轮次八后 tap-vt 694 / tapterm 332 通过；待用户手测（zsh 命令流与历史、vim/less 锁定切换、中文 IME、多 split 焦点跟随、ssh 会话输入栏可用）
 - [x] 【已完成】背景图透明度与字符层分离（[详情](task/20261118-1941_背景图透明度与字符层分离.md)）
   - 复现问题并定位根因（opacity 作用层级）：wgpu/Vulkan 路径背景图绘制晚于 grid 文本层，半透明图像直接盖在字符上
   - 背景图独立暗化/透明度处理，不影响字符渲染：背景图绘制前移至 grid 之前（与 Metal 一致），基色改为主题背景色
@@ -22,29 +22,29 @@
   - 直接在终端面板进入选择模式（不依赖鼠标）：沿用 Alt+Shift+Space → v 两步（用户确认不加新键）
   - vim 风格移动/选择/复制（y 复制、v 可视选择）：Esc 改两段式（ClearSelectionOrExit）；Ctrl+d/u 等滚动移动补选区扩展与高亮同步；Shift+[ / ] 段落移动
   - 选中内容进剪贴/缓冲区，配合中键输出：新增 sync_vi_selection_clipboard，选区变化实时写 PRIMARY，y 双写 CLIPBOARD+PRIMARY
-  - 验证：cargo build / test（rio-vt 708、rio-backend 219、rioterm 293）/ clippy / fmt 通过，待用户手测（含 xclip 验证 PRIMARY、中键粘贴）
+  - 验证：cargo build / test（tap-vt 708、tap-backend 219、tapterm 293）/ clippy / fmt 通过，待用户手测（含 xclip 验证 PRIMARY、中键粘贴）
 - [x] 【已完成】TERM 固定为 xterm-256color 兼容 SSH 远程（[详情](task/20261118-2000_TERM固定为xterm-256color兼容SSH远程.md)）
-  - 统一三处 TERM 设置点（rioterm main / librio pty / flatpak spawn），固定为 xterm-256color
+  - 统一三处 TERM 设置点（tapterm main / libtap pty / flatpak spawn），固定为 xterm-256color
   - 保留 COLORTERM=truecolor，本地会话回归验证（颜色、按键、vim/less/tmux）
   - ssh 远程验证（无 unknown terminal type；远端 tmux 因 Tc 丢失降 256 色为已知代价）
 - [x] 【已完成】配置文件默认位置改为 tap 目录（[详情](task/20261118-2053_配置文件默认位置改为tap目录.md)）
-  - 三平台 `config_dir_path()` 默认目录 `rio` → `tap`（Linux `~/.config/tap/config.toml`）
-  - 派生路径自动跟随（config.toml / themes / log / watcher），`RIO_CONFIG_HOME` 覆盖保留
-  - 迁移：旧 `~/.config/rio/config.toml` 需手动移动/复制到新位置
+  - 三平台 `config_dir_path()` 默认目录 `tap` → `tap`（Linux `~/.config/tap/config.toml`）
+  - 派生路径自动跟随（config.toml / themes / log / watcher），`TAP_CONFIG_HOME` 覆盖保留
+  - 迁移：旧 `~/.config/tap/config.toml` 需手动移动/复制到新位置
 - [x] 【已完成】默认配置固化（字体/字号/窗口/透明度）（[详情](task/20261118-2059_默认配置固化字体字号窗口.md)）
   - 字号默认 18，字体默认 Fira Code SemiBold（family 覆盖全部 slot，缺失时 warning + 内置兜底）
   - 窗口默认 Maximized；默认 opacity 经用户复核定为 1.0（曾设 0.8 后改回，透明度留给用户按需配置）
   - 配合默认背景图实现无配置文件开箱即用；验证：config 88 测试 + sugarloaf 138 测试通过，待用户冷启动实测
 - [x] 【已完成】构建产物改名为 tap（[详情](task/20261118-2110_构建产物改名为tap.md)）
-  - `[[bin]] name` rio → tap（target/{debug,release}/tap），deb 资源路径同步
-  - APPLICATION_ID "Rio" → "Tap"（WM_CLASS / Wayland app_id），desktop 文件改名 tap.desktop 并同步 Exec/Icon/StartupWMClass
+  - `[[bin]] name` tap → tap（target/{debug,release}/tap），deb 资源路径同步
+  - APPLICATION_ID "Tap" → "Tap"（WM_CLASS / Wayland app_id），desktop 文件改名 tap.desktop 并同步 Exec/Icon/StartupWMClass
   - Makefile release 目标产物路径更新；nix/TERM_PROGRAM/缓存目录等品牌残留未动（见任务文档）
 - [x] 【已完成】快捷键去重与屏蔽鼠标（[详情](task/20261119-1310_快捷键去重与屏蔽鼠标.md)）
   - 去掉 `[` / `]` 的标签与分屏循环切换默认绑定（action 保留可自绑）
   - 标签：Ctrl+Tab 下一个、`<leader>`+Tab 上一个、`<leader>`+1…8 切第 n 个、`<leader>`+9 最后一个（三平台统一，macOS 保留 Super+数字）
   - 分屏焦点 vi 风格方向切换：`<leader>`+H/J/K/L（左/下/上/右），基于 pane 几何（重叠优先、就近平手、无候选不动、不跨标签）；新增 `selectsplitleft/down/up/right` action
   - 鼠标默认屏蔽：新增 `disable-mouse`（默认 true，热重载），事件入口丢弃 MouseInput/CursorMoved/CursorLeft/MouseWheel/Touch，不向 PTY 转发
-  - 快捷键清单全量更新（含底部输入栏小节、鼠标小节）；验证：rioterm 308 测试通过（含 2 个新几何测试）、clippy/fmt 干净，待用户实测
+  - 快捷键清单全量更新（含底部输入栏小节、鼠标小节）；验证：tapterm 308 测试通过（含 2 个新几何测试）、clippy/fmt 干净，待用户实测
 - [x] 【已完成】修复 input-bar 配置节不生效（[详情](task/20261119-1340_修复input-bar配置节不生效.md)）
   - 根因：`input_bar` 字段漏加 `rename = "input-bar"`，serde 只认 `[input_bar]` 下划线节名，连字符节被静默忽略回落默认值；`[panel]` 实际一直生效（默认 6/10 → 8/12 视觉差异小）
   - 修复：补 rename 与全项目 kebab-case 键风格统一；新增回归测试 `test_input_bar_section_uses_hyphenated_key`
@@ -54,37 +54,41 @@
   - 虚化预选（zsh-autosuggestions 语义）：光标尾部时按前缀匹配取最近历史条目，caret 后画暗色续写；`→`/`End` 整体接受、编辑即消失、preedit 期间压制、锁定态清空；变异时刷新（不在 render 每帧扫描）
   - Tab 补全（仅文件系统）：首词 = PATH 可执行 + 30 内建，其余词 = 焦点 pane cwd 路径（`~` 展开、隐藏项过滤、目录补 `/`）；多候选 = 公共前缀 + 面板内候选行（高亮项保证可见）+ Tab 循环；Tab 一律消费不再泄漏 PTY（Shift+Tab 仍直通，自绑 Tab 优先）
   - 配置：`[input-bar] record-history / suggestions`（默认开，热重载即时生效）；提交落盘在 close_if_exited 检查之后（pane 退出的行不记录），与内存相邻去重锁步
-  - 验证：rio-backend 228 / rioterm 330（新增 22）测试通过，clippy/fmt 干净，待用户手测（重启回显历史、建议接受/消失、补全循环、分屏各自 cwd、热重载开关）
+  - 验证：tap-backend 228 / tapterm 330（新增 22）测试通过，clippy/fmt 干净，待用户手测（重启回显历史、建议接受/消失、补全循环、分屏各自 cwd、热重载开关）
 - [x] 【已完成】清理 build 刷屏警告（[详情](task/20261119-1636_清理build刷屏警告.md)）
   - 真实问题修复：未用 import ×3、X11 IME 函数指针 `as *const ()` 再转 usize、teletypewriter `uses_default_shell` 按 macOS cfg 门控、corcovado 冗余 homepage、删除从未编译的孤儿文件 font_cache.rs
-  - 门控误报处理：`BorderConfig.color` / `should_draw_borders` / `set_metrics`（测试或待接分屏描边使用）按项目惯例加 `#[allow(dead_code)]`；rio-backend 测试专用 `onig` 移入 dev-deps 并删未用 `url`
-  - 依赖清单清理：根 workspace 删 6 个无成员引用的依赖（frontends/wasm 非成员、版本就地内联）；rioterm `wgpu` 改 optional 挂 `wgpu` feature；sugarloaf 删 5 个未用依赖、`futures/rayon/thiserror` 挂 `wgpu` feature；librio-wasm 依赖移入 wasm32 target 表；rioterm 删 `lru`/`futures`
-  - 验证：默认构建与 `--features wgpu` 构建均 0 警告；rio-backend 228 / rioterm 332 / teletypewriter 17 测试通过；修复轮次一（20261119-2145）：工具链 1.100 `cargo::unused_dependencies` 默认 warn 暴露残留——rioterm dev-deps 整节删除（pretty_assertions 全仓库无引用、criterion 仅 rio-vt/sugarloaf/corcovado bench 用）+ 死方法 `is_broadcast`/`set_history` 删除（测试改走 set_history_entries），build 与 test 编译均 0 警告，rioterm 376 过
+  - 门控误报处理：`BorderConfig.color` / `should_draw_borders` / `set_metrics`（测试或待接分屏描边使用）按项目惯例加 `#[allow(dead_code)]`；tap-backend 测试专用 `onig` 移入 dev-deps 并删未用 `url`
+  - 依赖清单清理：根 workspace 删 6 个无成员引用的依赖（frontends/wasm 非成员、版本就地内联）；tapterm `wgpu` 改 optional 挂 `wgpu` feature；sugarloaf 删 5 个未用依赖、`futures/rayon/thiserror` 挂 `wgpu` feature；libtap-wasm 依赖移入 wasm32 target 表；tapterm 删 `lru`/`futures`
+  - 验证：默认构建与 `--features wgpu` 构建均 0 警告；tap-backend 228 / tapterm 332 / teletypewriter 17 测试通过；修复轮次一（20261119-2145）：工具链 1.100 `cargo::unused_dependencies` 默认 warn 暴露残留——tapterm dev-deps 整节删除（pretty_assertions 全仓库无引用、criterion 仅 tap-vt/sugarloaf/corcovado bench 用）+ 死方法 `is_broadcast`/`set_history` 删除（测试改走 set_history_entries），build 与 test 编译均 0 警告，tapterm 376 过
 - [x] 【已完成】输入栏动态补全（Cobra `__complete` 协议）+ SSH 主机/远程补全（[详情](task/20261119-1801_输入栏动态补全Cobra协议与SSH.md)）
   - 路由纯函数（tokenize 分词 / ssh_route 解析 / resolve_tool 别名）：按缓冲 argv 分发静态命令、静态路径、ssh 主机表、动态请求；`[input-bar] dynamic-completion`（默认开）与 `command-aliases`（`k = "kubectl"`）配置，关闭即回退旧静态行为
   - Cobra 系 CLI（kubectl/helm/gh/argocd/flux/kind/istioctl/docker）：后台线程 spawn `__completeNoDesc`（看门狗本地 5s/远程 12s），指令位落实（`:2` 无空格 / `:4` 不回退文件 / `:16` 目录 / `:32` 保序、过滤 `_activeHelp_`），TTL 10s 缓存，buffer 指纹防错插，render/击键/Tab 前三处 poll 非阻塞送达
-  - ssh：host 槽位静态主机表（config 非通配 Host + known_hosts 非 hashed、`user@` 头保留）；host 后远程查询（BatchMode+ConnectTimeout、sh_quote 转义、远程首词 compgen）；交互式 ssh 会话内经 tcgetpgrp + /proc 前台进程 cmdline 探测目的地（macOS 走 ps）走侧信道补全，不向现存会话注入文本；修复轮次二（20261119-2255）：侧信道加 ControlMaster/ControlPath(%C)/ControlPersist(10m) 多路复用（`{cache}/rio/ssh-mux`，OnceLock 惰性建目录，不可用回落单发），首次 Tab 付握手、后续毫秒级；修复轮次三（20261119-2315）：提交 ssh 行瞬间 `interactive_ssh_dest` 判定 + `warm_ssh_side_channel` 后台预热 master（握手与登录重叠，首 Tab 毫秒级；one-shot/裸 ssh/非 ssh 不触发，已 warm 为 no-op）
-  - 验证：rio-backend 229 / rioterm 375（+2）/ teletypewriter 17 测试通过；修复轮次一后真实 GUI 闭环验证通过（autossh 进 172.24.0.145 输 `kube` 连按 Tab 落盘 `kubelet`）；修复轮次二/三待用户复测（同主机 Tab 毫秒级、提交 ssh 后首 Tab 即快）
+  - ssh：host 槽位静态主机表（config 非通配 Host + known_hosts 非 hashed、`user@` 头保留）；host 后远程查询（BatchMode+ConnectTimeout、sh_quote 转义、远程首词 compgen）；交互式 ssh 会话内经 tcgetpgrp + /proc 前台进程 cmdline 探测目的地（macOS 走 ps）走侧信道补全，不向现存会话注入文本；修复轮次二（20261119-2255）：侧信道加 ControlMaster/ControlPath(%C)/ControlPersist(10m) 多路复用（`{cache}/tap/ssh-mux`，OnceLock 惰性建目录，不可用回落单发），首次 Tab 付握手、后续毫秒级；修复轮次三（20261119-2315）：提交 ssh 行瞬间 `interactive_ssh_dest` 判定 + `warm_ssh_side_channel` 后台预热 master（握手与登录重叠，首 Tab 毫秒级；one-shot/裸 ssh/非 ssh 不触发，已 warm 为 no-op）
+  - 验证：tap-backend 229 / tapterm 375（+2）/ teletypewriter 17 测试通过；修复轮次一后真实 GUI 闭环验证通过（autossh 进 172.24.0.145 输 `kube` 连按 Tab 落盘 `kubelet`）；修复轮次二/三待用户复测（同主机 Tab 毫秒级、提交 ssh 后首 Tab 即快）
 - [x] 【已完成】输入栏密码密文模式（[详情](task/20261119-1724_输入栏密码密文模式.md)）
   - 自动检测：击键/粘贴进缓冲前 `tcgetattr(main_fd)` 读 PTY 线路规程，teletypewriter `secret_prompt_expected`——「`ECHO` 关 + `ICANON` 开」= 口令提示（sudo/ssh/`read -s`）→ 自动密文；行编辑器（zsh ZLE/readline）raw 模式不误掩码（修复轮次一：首轮仅判 ECHO 导致正常提示符全变 `•`）；探测失败不掩码，无后台轮询线程
   - 密文行为：字符画 `•`、压制虚化预选与 Tab 补全；sticky——回显中途恢复不解除，仅随行生命周期复位（提交/Ctrl+C 清空/载入历史条目）；↑ 载入历史解除密文、↓ 回 draft 按 `draft_masked` 恢复
   - 历史跳过：内存历史（take_submitted_line）与持久历史库（submit 侧显式 `!was_masked`，防密码恰同末条历史被相邻去重放过）双重拦截；ssh 会话内远程口令、raw 模式读口令等无信号场景不掩码为已知边界
-  - 验证：teletypewriter 17（+规程探测测试）/ rioterm 336（+4 密文单测）通过，clippy/fmt 干净，待用户手测（正常提示符不再误掩码、sudo/ssh 本机口令显 `•`、历史库无密码残留）
+  - 验证：teletypewriter 17（+规程探测测试）/ tapterm 336（+4 密文单测）通过，clippy/fmt 干净，待用户手测（正常提示符不再误掩码、sudo/ssh 本机口令显 `•`、历史库无密码残留）
 - [x] 【已完成】借鉴 Warp 输入栏细节打磨（[详情](task/20261119-2003_借鉴Warp输入栏细节打磨.md)）
   - P1 补全正确性：候选新增替换串 shell 转义（sh_escape 反斜杠逐字符、`~/` 头保持可展开，路径/Cobra/命令三处统一，显示串保留原名）、插入前防缩短校验（单候选与 LCP 双处，候选须为当前词超集否则整组丢弃）、symlink 跟随判目录（metadata() 跟随判定，symlink 目录补 `/`）；多候选目录补 `/` 经核已是既有行为，随 symlink 修复补齐缺口
   - P2 历史库：load_entries 全量去重保最后出现（`a b a` 重启后 ↑ 只见一条 a，存储仍只追加）、前导空格/全空白行不记录（take_submitted_line 与落盘 gate 双处，records_history_line 共享谓词）
   - P3 建议逻辑：ghost 同 cwd 优先两桶扫描（load_entries 回传 cwd、set_history_entries/set_last_history_cwd/set_focus_cwd 三点供数，焦点 cwd 在提交与 Tab 时快照，↑/↓ 浏览不变）、strip_prefix 渐进裁剪免重查（suggestion_line 存整行，打字/退格裁尾，偏移才重扫；焦点 cwd 变更绕过裁剪直接重排序）
   - P4：Ctrl+→ 逐词接受 ghost（accept_suggestion_word，剩余续作 ghost，无 ghost 时透传终端 word-right，与既有绑定无冲突）；Tab 决策四态纯函数化未做（改动未自然触碰，不强求）
-  - 验证：rio-backend 229 / rioterm 365 测试通过（新增 17 个：转义 5、防缩短 1、历史去重/忽略空格 3、ghost cwd/裁剪/逐词 4、symlink 1 等），clippy/fmt 干净；librio 存在 3 个与本任务无关的既有 flaky（backwards_drag/osc8_links/iterm2_image，净树同样失败）；待用户手测清单见任务文档
+  - 验证：tap-backend 229 / tapterm 365 测试通过（新增 17 个：转义 5、防缩短 1、历史去重/忽略空格 3、ghost cwd/裁剪/逐词 4、symlink 1 等），clippy/fmt 干净；libtap 存在 3 个与本任务无关的既有 flaky（backwards_drag/osc8_links/iterm2_image，净树同样失败）；待用户手测清单见任务文档
 - [x] 【已完成】OSC 133 信号接入输入栏（[详情](task/20261119-2024_OSC133信号接入输入栏.md)）
-  - 事实修正：upstream rio 已带全套——spawn 自动注入（zsh ZDOTDIR/fish XDG_DATA_DIRS/PowerShell 重写，bash/cmd 不注入，`shell_integration/mod.rs`）、rio-vt 解析 OSC 133 A/N/C/D+exit 与 OSC 7 cwd、pane 级 current_directory 存储、`CommandFinished{exit_status,duration,route_id}` 事件已到 application 层（现仅驱动 notify-on-command-finish）
+  - 事实修正：upstream tap 已带全套——spawn 自动注入（zsh ZDOTDIR/fish XDG_DATA_DIRS/PowerShell 重写，bash/cmd 不注入，`shell_integration/mod.rs`）、tap-vt 解析 OSC 133 A/N/C/D+exit 与 OSC 7 cwd、pane 级 current_directory 存储、`CommandFinished{exit_status,duration,route_id}` 事件已到 application 层（现仅驱动 notify-on-command-finish）
   - 接线一（exit 落历史）：Entry 增 exit 列（TSV 可选第四列，尾部整数语义，旧三列兼容）；提交侧按 route 入队（`MAX_EXIT_PENDING=8`），`note_command_finished` 以 `now-duration` 为命令起始时间做时间窗排水（事件链无 CommandStarted，C 确认制不可行；首版 +1 宽限被测试抓出误吸运行中提交的下一行，已删）回填 `(ts,line)` 最新未回填行，其余字节逐字保留；D 无状态也排水防队头滞留；application 侧先于 notify 配置早退调用
   - 接线二（cwd 真值）：`focused_pane_cwd()` = OSC 7 `current_directory` 优先（提示符与 chpwd 双时机刷新）→ `foreground_process_path` 探测兜底 → None；Tab 补全与提交落盘换用，submit 的 Windows cfg 分支消并；ssh 远端 OSC 7 不更新由探测兜底覆盖
   - 明确不动：锁定判定维持修复轮次八（仅 ALT_SCREEN，标记只增强不门控）；bash/cmd 注入、远端标记、exit 的 UI 展示不做
-  - 验证：rio-backend 229 / rio-vt 708 / rioterm 373（+8）通过，clippy/fmt 干净，待用户手测（zsh 提交后 input-history 尾行带 exit 列；bash 三列不变；ssh 补全 cwd 仍正确）
+  - 验证：tap-backend 229 / tap-vt 708 / tapterm 373（+8）通过，clippy/fmt 干净，待用户手测（zsh 提交后 input-history 尾行带 exit 列；bash 三列不变；ssh 补全 cwd 仍正确）
 - [x] 【已完成】输入广播（多分屏同步提交）（[详情](task/20261119-2024_输入广播多分屏同步提交.md)）
   - 形态：`<leader>`+S toggle（leader+B 被向后搜索占用；自绑名 togglebroadcast），开启时输入栏提示符变 `>> ❯`；历史仍记一条（焦点 pane cwd）；热重载 mem::take 保留 bar 实例，广播状态跨重载存活
   - 修复轮次二定稿（20261119-2230，用户拍板忠实广播，tmux synchronize-panes 语义）：广播开启时一切发往终端的输入字节——整行提交、所有直通按键（含 Ctrl+C/D/Z、Esc）、粘贴、key-release——原样扇出到当前标签全部 pane，不筛选不提示，单一汇聚点 `send_input_bytes()` 四处接线；鼠标不广播；`>>` 标识保留
   - 演进记录：v1 提交级 fan-out + 锁定跳过提示 → 修复轮次一 Ctrl+C 扇出 → 修复轮次二全量忠实广播（删除锁定跳过/notice 机制/broadcast_recipients 纯函数，比 v1 更简单）
-  - 验证：rioterm 373 通过，clippy 0 告警，fmt 干净；快捷键清单已同步；待用户复测（4 pane 广播 ping → Ctrl+C 全停）
+  - 验证：tapterm 373 通过，clippy 0 告警，fmt 干净；快捷键清单已同步；待用户复测（4 pane 广播 ping → Ctrl+C 全停）
   - 后续候选：全部标签/勾选集合 scope
+- [x] 【已完成】全项目 rio → tap 改名（不留 rio 痕迹）（[详情](task/20261119-2244_全项目rio改名tap.md)）
+  - 目录/文件改名：12 个 rio 目录（rio-vt/rio-backend/rio-window/librio/librio-wasm/frontends/rioterm 等 → tap-*/libtap*/frontends/tapterm，misc/osx/Rio.app→Tap.app）+ 散落文件（pkgRio.nix→pkgTap.nix、extra/man/rio*.scd→tap*.scd、misc/rio.terminfo/termcap/metainfo/windows、.github/workflows/librio.yml→libtap.yml、specs/librio.md→libtap.md、rio-logo.ico、shell 集成脚本 rio-*.zsh/fish/ps1 等，合计 399 个路径）
+  - 全库文本替换 rio/Rio/RIO→tap/Tap/TAP（含 Cargo.toml/两处 Cargo.lock 包名与依赖、TERM_PROGRAM、~/.cache/tap 缓存路径、xterm-tap、com.tapterm.Tap、URL、CHANGELOG 与 task/ 历史文档）；保护误伤词 period/prior(ity)/criterion/interior/scenario/various/spurious/serious/Canario（VK_PRIOR/VK_OEM_PERIOD 等完好）
+  - 验证：cargo check --workspace --all-targets 通过（仅 teletypewriter 1 个与本次无关的既有测试警告）；已知残留：misc/logo*.svg base64 像素数据内 4 处 rio 字节序列（动则损坏图片）、raphamorim/tap 与 tapterm.com 等死链（原上游链接机械替换）、sugarloaf/corcovado/teletypewriter/Canario 里约主题命名（不含 rio 字样，未在范围）；待用户实测

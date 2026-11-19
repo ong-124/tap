@@ -157,7 +157,7 @@ pub(crate) struct InstanceBufferPool {
 
 #[cfg(target_os = "macos")]
 impl InstanceBufferPool {
-    /// Initial buffer size matches what rio used to allocate up-front
+    /// Initial buffer size matches what tap used to allocate up-front
     /// (~20k QuadInstances × 96 B ≈ 1.9 MiB). zed's default is the same
     /// 2 MiB.
     const INITIAL_SIZE: usize = 2 * 1024 * 1024;
@@ -1086,13 +1086,13 @@ impl Renderer {
 
         // The per-id `Content.states` walk is gone — non-Text content
         // arms (Rect/RoundedRect/Line/Triangle/Polygon/Arc/Image) had
-        // no rio caller passing `Some(id)`, so the Content registry
+        // no tap caller passing `Some(id)`, so the Content registry
         // never accumulated them. Immediate-mode primitives flow
         // through `Renderer::rect/quad/...` straight into
         // `comp.batches`; rich-text emission is handled by the grid
         // pass and `sugarloaf::text`.
 
-        // Image overlays: rio is responsible for not leaving stale
+        // Image overlays: tap is responsible for not leaving stale
         // overlays for hidden panels (callers `clear_image_overlays_for`
         // on hide / panel removal). The renderer just drains whatever
         // `image_overlays` currently holds.
@@ -2515,7 +2515,7 @@ impl Renderer {
     /// 3. Non-quad geometry — `polygon()` / `line()` / `triangle()`
     ///    / `arc()` calls (cursor underline shape, hint highlights).
     /// 4. AboveText image overlays.
-    /// 5. Optional bootstrap rect (`RIO_VULKAN_BOOTSTRAP=1`).
+    /// 5. Optional bootstrap rect (`TAP_VULKAN_BOOTSTRAP=1`).
     ///
     /// The background image is NOT drawn here — it is the bottom
     /// layer and must land before the grid text pass, so

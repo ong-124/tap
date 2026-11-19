@@ -1,10 +1,10 @@
 extern crate png;
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use rio_window::event::WindowEvent;
-use rio_window::event_loop::ControlFlow;
-use rio_window::platform::run_on_demand::EventLoopExtRunOnDemand;
-use rio_window::{
+use tap_window::event::WindowEvent;
+use tap_window::event_loop::ControlFlow;
+use tap_window::platform::run_on_demand::EventLoopExtRunOnDemand;
+use tap_window::{
     dpi::LogicalSize, event::Event, event_loop::EventLoop, window::WindowAttributes,
 };
 use sugarloaf::layout::RootStyle;

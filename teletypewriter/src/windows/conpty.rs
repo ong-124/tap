@@ -33,28 +33,28 @@ use std::os::windows::ffi::OsStrExt;
 use crate::windows::child::ChildExitWatcher;
 use crate::windows::{cmdline, win32_string, Pty};
 
-/// Load the pseudoconsole API from the `conpty.dll` Rio ships next to
-/// `rio.exe`, otherwise fall back to the in-box Windows API.
+/// Load the pseudoconsole API from the `conpty.dll` Tap ships next to
+/// `tap.exe`, otherwise fall back to the in-box Windows API.
 ///
-/// Rio's Windows packages carry `conpty.dll` and `OpenConsole.exe` from
+/// Tap's Windows packages carry `conpty.dll` and `OpenConsole.exe` from
 /// the Windows Terminal project (see `misc/windows/conhost/README.md`).
 /// That host passes the child's output through unchanged: sixel, iTerm2
-/// and kitty graphics reach Rio, and so does the cursor position a TUI
+/// and kitty graphics reach Tap, and so does the cursor position a TUI
 /// leaves behind. The pseudoconsole built into most Windows builds
 /// rewrites that output, which is why images never rendered on stock
 /// Windows (#729, #1759) and the IME candidate window sat in the wrong
 /// place (#2031).
 ///
-/// The DLL is loaded by absolute path from `rio.exe`'s own directory,
+/// The DLL is loaded by absolute path from `tap.exe`'s own directory,
 /// never by the default search order, which also walks the working
 /// directory and `PATH`: when the bundled copy is missing (a build that
-/// does not package it, a user who removed it) Rio uses the in-box API
+/// does not package it, a user who removed it) Tap uses the in-box API
 /// rather than whatever `conpty.dll` happens to be on the way.
 ///
 /// `PSEUDOCONSOLE_RESIZE_QUIRK` is a ConPTY flag absent from the public
 /// SDK header, so not in `windows-sys`. Without it the in-box
 /// pseudoconsole re-emits its own reflowed buffer after a resize, over
-/// the grid Rio has already reflowed, so content ends up confined to a
+/// the grid Tap has already reflowed, so content ends up confined to a
 /// stale region once the window grows (microsoft/terminal#16911). With
 /// it the host leaves reflow to the terminal. The bundled host behaves
 /// that way regardless and ignores the flag, as every ConPTY ignores
@@ -102,7 +102,7 @@ impl ConptyApi {
         }
     }
 
-    /// Try loading the API from the `conpty.dll` next to `rio.exe`, by
+    /// Try loading the API from the `conpty.dll` next to `tap.exe`, by
     /// absolute path, so copies on `PATH` or in the working directory are
     /// never picked up.
     fn load_conpty() -> Option<Self> {
@@ -260,7 +260,7 @@ pub fn new(
     };
 
     // Create the pseudoconsole on the pipes. The resize quirk keeps the
-    // in-box host from repainting its reflowed buffer over Rio's grid.
+    // in-box host from repainting its reflowed buffer over Tap's grid.
     // No known host rejects the flag; should one, it would say so with
     // E_INVALIDARG, and a plain pseudoconsole beats no terminal, so that
     // one failure is retried without it.
@@ -309,7 +309,7 @@ pub fn new(
     startup_info_ex.StartupInfo.cb = mem::size_of::<STARTUPINFOEXW>() as u32;
 
     // Setting this flag but leaving all the handles as default (null) ensures the
-    // PTY process does not inherit any handles from this Rio process.
+    // PTY process does not inherit any handles from this Tap process.
     startup_info_ex.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
 
     // Create the appropriately sized thread attribute list.

@@ -1,12 +1,12 @@
 {
-  description = "Rio | A hardware-accelerated GPU terminal emulator";
+  description = "Tap | A hardware-accelerated GPU terminal emulator";
 
   # Binary cache populated by CI on every merge to main; nix offers to
-  # enable it on first use so `nix run github:raphamorim/rio` becomes a
+  # enable it on first use so `nix run github:raphamorim/tap` becomes a
   # download instead of a build.
   nixConfig = {
-    extra-substituters = ["https://rioterm.cachix.org"];
-    extra-trusted-public-keys = ["rioterm.cachix.org-1:cs/H9Jf0ZpHyR4WgjoNJZVBpkVi69Y4JASUK5ReEQPE="];
+    extra-substituters = ["https://tapterm.cachix.org"];
+    extra-trusted-public-keys = ["tapterm.cachix.org-1:cs/H9Jf0ZpHyR4WgjoNJZVBpkVi69Y4JASUK5ReEQPE="];
   };
 
   inputs = {
@@ -34,9 +34,9 @@
         # Defines a devshell using the `rust-toolchain`, allowing for
         # different versions of rust to be used.
         mkDevShell = rust-toolchain: let
-          runtimeDeps = self'.packages.rio.runtimeDependencies;
+          runtimeDeps = self'.packages.tap.runtimeDependencies;
           tools =
-            self'.packages.rio.nativeBuildInputs ++ self'.packages.rio.buildInputs ++ [rust-toolchain];
+            self'.packages.tap.nativeBuildInputs ++ self'.packages.tap.buildInputs ++ [rust-toolchain];
         in
           pkgs.mkShell {
             packages = [self'.formatter] ++ tools;
@@ -46,8 +46,8 @@
           msrv = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
           stable = pkgs.rust-bin.stable.latest.minimal;
           nightly = pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.minimal);
-          rio = msrv;
-          default = rio;
+          tap = msrv;
+          default = tap;
         };
       in {
         formatter = pkgs.alejandra;
@@ -56,16 +56,16 @@
           overlays = [(import inputs.rust-overlay)];
         };
 
-        # Create overlay to override `rio` with this flake's default
-        overlayAttrs = {inherit (self'.packages) rio;};
+        # Create overlay to override `tap` with this flake's default
+        overlayAttrs = {inherit (self'.packages) tap;};
         packages =
           lib.mapAttrs' (
             k: v: {
               name =
-                if builtins.elem k ["rio" "default"]
+                if builtins.elem k ["tap" "default"]
                 then k
-                else "rio-${k}";
-              value = pkgs.callPackage ./pkgRio.nix {rust-toolchain = v;};
+                else "tap-${k}";
+              value = pkgs.callPackage ./pkgTap.nix {rust-toolchain = v;};
             }
           )
           toolchains;

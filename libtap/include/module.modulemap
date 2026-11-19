@@ -1,0 +1,4 @@
+module TapKit {
+    umbrella header "libtap.h"
+    export *
+}

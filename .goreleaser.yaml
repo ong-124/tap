@@ -17,7 +17,7 @@ env:
 before:
   hooks:
     - if: '{{ ne .Runtime.Goos "windows" }}'
-      cmd: tic -xe rio -o misc misc/rio.terminfo
+      cmd: tic -xe tap -o misc misc/tap.terminfo
       output: true
     - if: '{{ eq .Runtime.Goos "windows" }}'
       cmd: dotnet tool install --global wix --version 5.0.2
@@ -26,7 +26,7 @@ before:
       cmd: wix extension add -g WixToolset.UI.wixext/5.0.2 WixToolset.Util.wixext/5.0.2
       output: true
     # The ConPTY pair (conpty.dll + OpenConsole.exe) shipped next to
-    # rio.exe; pinned by version and hash in the script.
+    # tap.exe; pinned by version and hash in the script.
     - if: '{{ eq .Runtime.Goos "windows" }}'
       cmd: pwsh -NoProfile -ExecutionPolicy Bypass -File misc/windows/conhost/fetch.ps1
       output: true
@@ -35,19 +35,19 @@ builds:
   - id: windows-x86_64
     builder: rust
     command: build
-    flags: [--release, -p=rioterm, --features=wgpu]
+    flags: [--release, -p=tapterm, --features=wgpu]
     targets: [x86_64-pc-windows-msvc]
 
   - id: windows-arm64
     builder: rust
     command: build
-    flags: [--release, -p=rioterm, --features=wgpu]
+    flags: [--release, -p=tapterm, --features=wgpu]
     targets: [aarch64-pc-windows-msvc]
 
   - id: macos
     builder: rust
     command: build
-    flags: [--release, -p=rioterm, --features=wgpu]
+    flags: [--release, -p=tapterm, --features=wgpu]
     env:
       - MACOSX_DEPLOYMENT_TARGET={{ if eq .Arch "amd64" }}10.15{{ else }}11.0{{ end }}
     targets: [x86_64-apple-darwin, aarch64-apple-darwin]
@@ -55,13 +55,13 @@ builds:
   - id: linux-arm64-wayland
     builder: rust
     command: build
-    flags: [--release, -p=rioterm, --no-default-features, --features=wayland, --features=wgpu]
+    flags: [--release, -p=tapterm, --no-default-features, --features=wayland, --features=wgpu]
     targets: [aarch64-unknown-linux-gnu]
 
   - id: linux-arm64-x11
     builder: rust
     command: build
-    flags: [--release, -p=rioterm, --no-default-features, --features=x11, --features=wgpu]
+    flags: [--release, -p=tapterm, --no-default-features, --features=x11, --features=wgpu]
     env:
       - CARGO_PROFILE_RELEASE_OPT_LEVEL=s
     targets: [aarch64-unknown-linux-gnu]
@@ -69,7 +69,7 @@ builds:
   - id: linux-x64-wayland
     builder: rust
     command: build
-    flags: [--release, -p=rioterm, --no-default-features, --features=wayland, --features=wgpu]
+    flags: [--release, -p=tapterm, --no-default-features, --features=wayland, --features=wgpu]
     env:
       - CARGO_PROFILE_RELEASE_OPT_LEVEL=s
     targets: [x86_64-unknown-linux-gnu]
@@ -77,7 +77,7 @@ builds:
   - id: linux-x64-x11
     builder: rust
     command: build
-    flags: [--release, -p=rioterm, --no-default-features, --features=x11, --features=wgpu]
+    flags: [--release, -p=tapterm, --no-default-features, --features=x11, --features=wgpu]
     env:
       - CARGO_PROFILE_RELEASE_OPT_LEVEL=s
     targets: [x86_64-unknown-linux-gnu]
@@ -109,7 +109,7 @@ checksum:
 archives:
   # Portable builds ship as a zip so the bundled ConPTY (conpty.dll,
   # and OpenConsole.exe in a folder named for the machine) sits next
-  # to rio.exe, matching the installer. The bare .exe stays for one
+  # to tap.exe, matching the installer. The bare .exe stays for one
   # release: the Scoop manifest and the install page download it by
   # name. Drop `binary` once both point at the zip.
   - id: win-x64
@@ -138,13 +138,13 @@ archives:
         dst: arm64/OpenConsole.exe
 
 universal_binaries:
-  - id: rio
+  - id: tap
     ids: [macos]
     replace: true
 
 dmg:
-  - id: rio
-    ids: [rio]
+  - id: tap
+    ids: [tap]
     name: "{{ .ProjectName }}"
     use: appbundle
 
@@ -160,18 +160,18 @@ notarize:
         profile_name: "{{ .Env.MACOS_NOTARY_KEYCHAIN_PROFILE }}"
 
 app_bundles:
-  - id: rio
-    ids: [rio]
-    icon: ./misc/osx/Rio.app/Contents/Resources/icon.icns
-    bundle: com.raphaelamorim.rio
+  - id: tap
+    ids: [tap]
+    icon: ./misc/osx/Tap.app/Contents/Resources/icon.icns
+    bundle: com.raphaelamorim.tap
     extra_files:
-      - src: ./misc/72/rio
-        dst: Contents/Resources/72/rio
+      - src: ./misc/72/tap
+        dst: Contents/Resources/72/tap
       # releases made before goreleaser integration included the classic icon
-      - src: ./misc/osx/Rio.app/Contents/Resources/icon-classic.icns
+      - src: ./misc/osx/Tap.app/Contents/Resources/icon-classic.icns
         dst: Contents/Resources/icon-classic.icns
     templated_extra_files:
-      - src: ./misc/osx/Rio.app/Contents/Info.plist
+      - src: ./misc/osx/Tap.app/Contents/Info.plist
         dst: Contents/Info.plist
 
 nfpms:
@@ -179,103 +179,103 @@ nfpms:
     id: deb-arm64-wayland
     ids: [linux-arm64-wayland]
     file_name_template: "{{- trimsuffix .ConventionalFileName .ConventionalExtension -}}_wayland"
-    package_name: rioterm
+    package_name: tapterm
     dependencies: [libc6 (>= 2.35), libstdc++6 (>= 11)]
     overrides:
       rpm:
         dependencies: [glibc, libstdc++]
         contents:
-          - src: ./misc/rio.desktop
-            dst: /usr/share/applications/rio.desktop
-          - src: ./misc/r/rio
-            dst: /usr/share/terminfo/r/rio
+          - src: ./misc/tap.desktop
+            dst: /usr/share/applications/tap.desktop
+          - src: ./misc/r/tap
+            dst: /usr/share/terminfo/r/tap
           - src: ./misc/logo.svg
-            dst: /usr/share/icons/hicolor/scalable/apps/rio.svg
+            dst: /usr/share/icons/hicolor/scalable/apps/tap.svg
     contents:
-      - src: ./misc/rio.desktop
-        dst: /usr/share/applications/rio.desktop
+      - src: ./misc/tap.desktop
+        dst: /usr/share/applications/tap.desktop
       - src: ./misc/logo.svg
-        dst: /usr/share/icons/hicolor/scalable/apps/rio.svg
+        dst: /usr/share/icons/hicolor/scalable/apps/tap.svg
     section: admin
     priority: optional
   - formats: [deb, rpm]
     id: deb-arm64-x11
     ids: [linux-arm64-x11]
     file_name_template: "{{- trimsuffix .ConventionalFileName .ConventionalExtension -}}_x11"
-    package_name: rioterm
+    package_name: tapterm
     dependencies: [libc6 (>= 2.35), libstdc++6 (>= 11)]
     overrides:
       rpm:
         dependencies: [glibc, libstdc++]
         contents:
-          - src: ./misc/rio.desktop
-            dst: /usr/share/applications/rio.desktop
-          - src: ./misc/r/rio
-            dst: /usr/share/terminfo/r/rio
+          - src: ./misc/tap.desktop
+            dst: /usr/share/applications/tap.desktop
+          - src: ./misc/r/tap
+            dst: /usr/share/terminfo/r/tap
           - src: ./misc/logo.svg
-            dst: /usr/share/icons/hicolor/scalable/apps/rio.svg
+            dst: /usr/share/icons/hicolor/scalable/apps/tap.svg
     contents:
-      - src: ./misc/rio.desktop
-        dst: /usr/share/applications/rio.desktop
+      - src: ./misc/tap.desktop
+        dst: /usr/share/applications/tap.desktop
       - src: ./misc/logo.svg
-        dst: /usr/share/icons/hicolor/scalable/apps/rio.svg
+        dst: /usr/share/icons/hicolor/scalable/apps/tap.svg
     section: admin
     priority: optional
   - formats: [deb, rpm]
     id: deb-x64-wayland
     ids: [linux-x64-wayland]
     file_name_template: "{{- trimsuffix .ConventionalFileName .ConventionalExtension -}}_wayland"
-    package_name: rioterm
+    package_name: tapterm
     dependencies: [libc6 (>= 2.35), libstdc++6 (>= 11)]
     overrides:
       rpm:
         dependencies: [glibc, libstdc++]
         contents:
-          - src: ./misc/rio.desktop
-            dst: /usr/share/applications/rio.desktop
-          - src: ./misc/r/rio
-            dst: /usr/share/terminfo/r/rio
+          - src: ./misc/tap.desktop
+            dst: /usr/share/applications/tap.desktop
+          - src: ./misc/r/tap
+            dst: /usr/share/terminfo/r/tap
           - src: ./misc/logo.svg
-            dst: /usr/share/icons/hicolor/scalable/apps/rio.svg
+            dst: /usr/share/icons/hicolor/scalable/apps/tap.svg
     contents:
-      - src: ./misc/rio.desktop
-        dst: /usr/share/applications/rio.desktop
+      - src: ./misc/tap.desktop
+        dst: /usr/share/applications/tap.desktop
       - src: ./misc/logo.svg
-        dst: /usr/share/icons/hicolor/scalable/apps/rio.svg
+        dst: /usr/share/icons/hicolor/scalable/apps/tap.svg
     section: admin
     priority: optional
   - formats: [deb, rpm]
     id: deb-x64-x11
     ids: [linux-x64-x11]
     file_name_template: "{{- trimsuffix .ConventionalFileName .ConventionalExtension -}}_x11"
-    package_name: rioterm
+    package_name: tapterm
     dependencies: [libc6 (>= 2.35), libstdc++6 (>= 11)]
     overrides:
       rpm:
         dependencies: [glibc, libstdc++]
         contents:
-          - src: ./misc/rio.desktop
-            dst: /usr/share/applications/rio.desktop
-          - src: ./misc/r/rio
-            dst: /usr/share/terminfo/r/rio
+          - src: ./misc/tap.desktop
+            dst: /usr/share/applications/tap.desktop
+          - src: ./misc/r/tap
+            dst: /usr/share/terminfo/r/tap
           - src: ./misc/logo.svg
-            dst: /usr/share/icons/hicolor/scalable/apps/rio.svg
+            dst: /usr/share/icons/hicolor/scalable/apps/tap.svg
     contents:
-      - src: ./misc/rio.desktop
-        dst: /usr/share/applications/rio.desktop
+      - src: ./misc/tap.desktop
+        dst: /usr/share/applications/tap.desktop
       - src: ./misc/logo.svg
-        dst: /usr/share/icons/hicolor/scalable/apps/rio.svg
+        dst: /usr/share/icons/hicolor/scalable/apps/tap.svg
     section: admin
     priority: optional
 
 msi:
   - id: win-x64
     name: "{{ .ProjectName }}-installer-x86_64"
-    wxs: ./misc/windows/rio.wxs
+    wxs: ./misc/windows/tap.wxs
     ids: [windows-x86_64]
     extensions: [WixToolset.UI.wixext, WixToolset.Util.wixext]
     extra_files:
-      - ./misc/windows/rio.ico
+      - ./misc/windows/tap.ico
       - ./misc/windows/License.rtf
       - ./misc/windows/conhost/LICENSE
       - ./misc/windows/conhost/amd64/conpty.dll
@@ -283,11 +283,11 @@ msi:
       - ./misc/windows/conhost/amd64/arm64/OpenConsole.exe
   - id: win-arm64
     name: "{{ .ProjectName }}-installer-aarch64"
-    wxs: ./misc/windows/rio.wxs
+    wxs: ./misc/windows/tap.wxs
     ids: [windows-arm64]
     extensions: [WixToolset.UI.wixext, WixToolset.Util.wixext]
     extra_files:
-      - ./misc/windows/rio.ico
+      - ./misc/windows/tap.ico
       - ./misc/windows/License.rtf
       - ./misc/windows/conhost/LICENSE
       - ./misc/windows/conhost/arm64/conpty.dll
@@ -295,26 +295,26 @@ msi:
 
 winget:
   - use: msi
-    name: Rio
-    package_identifier: raphamorim.rio
+    name: Tap
+    package_identifier: raphamorim.tap
     author: Raphael Amorim
     release_notes: "{{ .Changelog }}"
-    release_notes_url: https://github.com/raphamorim/rio/releases/tag/{{ .Tag }}
+    release_notes_url: https://github.com/raphamorim/tap/releases/tag/{{ .Tag }}
     publisher: Raphael Amorim
     publisher_url: https://raphamorim.io
-    publisher_support_url: https://github.com/raphamorim/rio/issues
-    license_url: https://raw.githubusercontent.com/raphamorim/rio/main/LICENSE
+    publisher_support_url: https://github.com/raphamorim/tap/issues
+    license_url: https://raw.githubusercontent.com/raphamorim/tap/main/LICENSE
     copyright: Copyright (c) {{ .Now.Format "2006" }} Raphael Amorim
-    copyright_url: https://raw.githubusercontent.com/raphamorim/rio/main/LICENSE
+    copyright_url: https://raw.githubusercontent.com/raphamorim/tap/main/LICENSE
     tags: [cross-platform, terminal, terminal-emulators]
-    commit_msg_template: "New version: raphamorim.rio {{ .Tag }}"
+    commit_msg_template: "New version: raphamorim.tap {{ .Tag }}"
     commit_author:
       name: raphamorim
       email: 3630346+raphamorim@users.noreply.github.com
     repository:
       owner: raphamorim
       name: winget-pkgs
-      branch: rio-{{ .Tag }}-{{ .Now.Format "20060102150405"}}
+      branch: tap-{{ .Tag }}-{{ .Now.Format "20060102150405"}}
       pull_request:
         enabled: true
         base:
@@ -327,7 +327,7 @@ after:
   hooks:
     # homebrew-cask is bumped automatically by BrewTestBot (cask has livecheck)
     # --no-verify: the build matrix already compiled every crate; publish's
-    # default-feature rebuild trips rio-window's platform compile_error.
+    # default-feature rebuild trips tap-window's platform compile_error.
     - cmd: cargo publish --workspace --no-verify
       if: "{{ and .IsRelease .IsMerging }}"
       output: true
@@ -336,4 +336,4 @@ metadata:
   maintainers: [Raphael Amorim <rapha850 at gmail dot com>]
   license: MIT
   description: A hardware-accelerated GPU terminal emulator focusing to run in desktops and browsers.
-  homepage: https://rioterm.com
+  homepage: https://tapterm.com

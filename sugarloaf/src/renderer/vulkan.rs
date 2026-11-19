@@ -13,7 +13,7 @@
 //! plan in `context/vulkan.rs`.
 //!
 //! The bootstrap rect is invisible by default; set
-//! `RIO_VULKAN_BOOTSTRAP=1` in the environment to make it visible (a
+//! `TAP_VULKAN_BOOTSTRAP=1` in the environment to make it visible (a
 //! centered magenta quad). The pipeline is always *constructed* either
 //! way so any SPIR-V / pipeline-state validation errors surface
 //! immediately at sugarloaf startup, not lazily on first frame with the
@@ -69,7 +69,7 @@ pub struct VulkanRenderer {
     /// `Screen.grids`) is dropped, so this renderer's `Drop` can
     /// safely tear down pipelines regardless of struct field-order
     /// elsewhere — fixes the cross-struct ordering trap behind
-    /// raphamorim/rio#1568. Also lets `render_quads` allocate from
+    /// raphamorim/tap#1568. Also lets `render_quads` allocate from
     /// `&mut self` without needing a live `&VulkanContext` borrow.
     /// See `VkShared`.
     shared: Arc<VkShared>,
@@ -181,12 +181,12 @@ impl VulkanRenderer {
             device.destroy_shader_module(frag_module, None);
         }
 
-        let bootstrap_visible = std::env::var_os("RIO_VULKAN_BOOTSTRAP")
+        let bootstrap_visible = std::env::var_os("TAP_VULKAN_BOOTSTRAP")
             .map(|v| v != "0" && !v.is_empty())
             .unwrap_or(false);
 
         if bootstrap_visible {
-            tracing::info!("Vulkan bootstrap rect enabled (RIO_VULKAN_BOOTSTRAP set)");
+            tracing::info!("Vulkan bootstrap rect enabled (TAP_VULKAN_BOOTSTRAP set)");
         }
 
         // Quad pipeline construction.
@@ -617,7 +617,7 @@ impl VulkanRenderer {
     }
 
     /// Whether the user opted into the magenta debug rect via
-    /// `RIO_VULKAN_BOOTSTRAP=1`. Read by `Sugarloaf::render_vulkan`
+    /// `TAP_VULKAN_BOOTSTRAP=1`. Read by `Sugarloaf::render_vulkan`
     /// so the rect can be drawn between grid passes and the present
     /// barrier — keeping all draws inside the single render pass that
     /// the Sugarloaf-level orchestrator opens.

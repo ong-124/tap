@@ -38,7 +38,7 @@ use std::sync::Arc;
 /// for `VulkanRenderer`-inside-`Sugarloaf` (single parent) cannot
 /// extend to `VulkanGridRenderer`-inside-`Screen.grids` (a sibling
 /// of the parent that owns the device), which is the bug behind
-/// raphamorim/rio#1568.
+/// raphamorim/tap#1568.
 ///
 /// Mirrors `wgpu_hal::vulkan::DeviceShared`. `raw` is named for the
 /// underlying `ash::Device` to match wgpu-hal's convention; `Deref`
@@ -149,12 +149,12 @@ pub struct VulkanContext {
     /// Vulkan state) so `vkDestroyDevice` runs only after the last
     /// dependent resource is dropped. Replaces the previous bare
     /// `device.clone()` cloning, which was unsafe across struct
-    /// boundaries (raphamorim/rio#1568). `Deref` to `ash::Device`
+    /// boundaries (raphamorim/tap#1568). `Deref` to `ash::Device`
     /// keeps call sites unchanged: `self.shared.cmd_bind_pipeline(...)`.
     shared: Arc<VkShared>,
 
     /// Pipeline cache shared by every `create_graphics_pipelines`
-    /// call. Loaded from `~/.cache/rio/sugarloaf-vulkan.cache` (best
+    /// call. Loaded from `~/.cache/tap/sugarloaf-vulkan.cache` (best
     /// effort) at startup and serialised back on `Drop`. Saves
     /// ~10–50ms of pipeline build time on subsequent launches.
     pipeline_cache: vk::PipelineCache,
@@ -164,7 +164,7 @@ pub struct VulkanContext {
     surface: vk::SurfaceKHR,
     surface_loader: khr::surface::Instance,
     /// Debug-utils messenger, present only when validation layers
-    /// were requested via `RIO_VULKAN_VALIDATION=1`. Drops before
+    /// were requested via `TAP_VULKAN_VALIDATION=1`. Drops before
     /// `instance` (declaration order) so the messenger handle is
     /// destroyed while the instance is still alive.
     _debug_messenger: Option<DebugMessenger>,
@@ -500,7 +500,7 @@ impl VulkanContext {
     /// `Arc` is dropped. The previous design (each leaf cloning the
     /// raw `ash::Device` dispatch table) crashed when the parent
     /// `VulkanContext` happened to drop first; see
-    /// raphamorim/rio#1568.
+    /// raphamorim/tap#1568.
     #[inline]
     pub fn shared(&self) -> &Arc<VkShared> {
         &self.shared
@@ -1059,7 +1059,7 @@ fn pipeline_cache_path() -> Option<std::path::PathBuf> {
     } else {
         return None;
     };
-    Some(dir.join("rio").join("sugarloaf-vulkan.cache"))
+    Some(dir.join("tap").join("sugarloaf-vulkan.cache"))
 }
 
 fn create_pipeline_cache(device: &Device) -> vk::PipelineCache {
@@ -1150,7 +1150,7 @@ fn create_instance(
             vec![validation_layer_name.as_ptr()]
         } else {
             tracing::warn!(
-                "RIO_VULKAN_VALIDATION set but VK_LAYER_KHRONOS_validation \
+                "TAP_VULKAN_VALIDATION set but VK_LAYER_KHRONOS_validation \
                  not available — install `vulkan-validationlayers` (Debian) \
                  / `vulkan-validation-layers` (Arch) to enable it"
             );
@@ -1169,11 +1169,11 @@ fn create_instance(
         .expect("vkCreateInstance failed — is a Vulkan 1.3 driver installed?")
 }
 
-/// True if the user opted into validation via `RIO_VULKAN_VALIDATION=1`.
+/// True if the user opted into validation via `TAP_VULKAN_VALIDATION=1`.
 /// We always read the env var (debug + release) so users can flip it
 /// on for one run without recompiling.
 fn validation_requested() -> bool {
-    std::env::var_os("RIO_VULKAN_VALIDATION")
+    std::env::var_os("TAP_VULKAN_VALIDATION")
         .map(|v| v != "0" && !v.is_empty())
         .unwrap_or(false)
 }

@@ -19,7 +19,7 @@ include = [
     "src/**/*.metal",
     "src/**/*.glsl",
 ]
-description = "Sugarloaf is Rio rendering engine, designed to be multiplatform. It is based on WebGPU, Rust library for Desktops and WebAssembly for Web (JavaScript). This project is created and maintained for Rio terminal purposes but feel free to use it."
+description = "Sugarloaf is Tap rendering engine, designed to be multiplatform. It is based on WebGPU, Rust library for Desktops and WebAssembly for Web (JavaScript). This project is created and maintained for Tap terminal purposes but feel free to use it."
 documentation = "https://docs.rs/crate/sugarloaf/latest"
 repository = "https://github.com/raphamorim/sugarloaf"
 
@@ -41,15 +41,15 @@ targets = [
 # `wgpu` feature. Default-off on macOS + Linux (the native Metal /
 # Vulkan backends are preferred and skip the wgpu translation
 # layer). Windows + WASM enable it via target-specific deps in the
-# downstream crate (`frontends/rioterm/Cargo.toml`).
+# downstream crate (`frontends/tapterm/Cargo.toml`).
 wgpu = { workspace = true, optional = true }
 bytemuck = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 image_rs = { workspace = true }
-rio-graphics = { workspace = true, features = ["glyph"] }
-rio-fonts = { workspace = true }
-rio-unicode = { workspace = true }
+tap-graphics = { workspace = true, features = ["glyph"] }
+tap-fonts = { workspace = true }
+tap-unicode = { workspace = true }
 rustc-hash = { workspace = true }
 raw-window-handle = { workspace = true }
 parking_lot = { workspace = true }
@@ -121,7 +121,7 @@ ash = "0.38.0"
 # higher-level `windows` crate isn't in Debian at all.
 
 [dev-dependencies]
-rio-window = { workspace = true }
+tap-window = { workspace = true }
 png = "0.17.16"
 deflate = "1.0.0"
 criterion = { workspace = true }
@@ -137,7 +137,7 @@ render = ["scale", "zeno/eval"]
 # librashader CRT/scanline filters.
 wgpu = [
     "dep:wgpu",
-    "rio-graphics/wgpu",
+    "tap-graphics/wgpu",
     "dep:librashader",
     "dep:librashader-common",
     "dep:librashader-presets",

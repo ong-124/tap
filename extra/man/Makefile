@@ -4,22 +4,22 @@
 SCDOC = scdoc
 MANDIR = /usr/local/share/man
 
-all: rio.1 rio.5 rio-bindings.5
+all: tap.1 tap.5 tap-bindings.5
 
-rio.1: rio.1.scd
+tap.1: tap.1.scd
 	$(SCDOC) < $< > $@
 
-rio.5: rio.5.scd
+tap.5: tap.5.scd
 	$(SCDOC) < $< > $@
 
-rio-bindings.5: rio-bindings.5.scd
+tap-bindings.5: tap-bindings.5.scd
 	$(SCDOC) < $< > $@
 
 install: all
 	mkdir -p $(DESTDIR)$(MANDIR)/man1 $(DESTDIR)$(MANDIR)/man5
-	install -m644 rio.1 $(DESTDIR)$(MANDIR)/man1/rio.1
-	install -m644 rio.5 $(DESTDIR)$(MANDIR)/man5/rio.5
-	install -m644 rio-bindings.5 $(DESTDIR)$(MANDIR)/man5/rio-bindings.5
+	install -m644 tap.1 $(DESTDIR)$(MANDIR)/man1/tap.1
+	install -m644 tap.5 $(DESTDIR)$(MANDIR)/man5/tap.5
+	install -m644 tap-bindings.5 $(DESTDIR)$(MANDIR)/man5/tap-bindings.5
 
 clean:
-	rm -f rio.1 rio.5 rio-bindings.5
+	rm -f tap.1 tap.5 tap-bindings.5

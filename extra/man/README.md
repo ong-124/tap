@@ -1,12 +1,12 @@
-# Rio Terminal Man Pages
+# Tap Terminal Man Pages
 
-This directory contains manual pages for Rio terminal emulator in scdoc format.
+This directory contains manual pages for Tap terminal emulator in scdoc format.
 
 ## Files
 
-- `rio.1.scd` - Main Rio terminal manual page (section 1)
-- `rio.5.scd` - Rio configuration file format manual page (section 5)  
-- `rio-bindings.5.scd` - Rio key bindings manual page (section 5)
+- `tap.1.scd` - Main Tap terminal manual page (section 1)
+- `tap.5.scd` - Tap configuration file format manual page (section 5)  
+- `tap-bindings.5.scd` - Tap key bindings manual page (section 5)
 
 ## Building
 
@@ -44,18 +44,18 @@ sudo make install
 make -C extra/man
 
 # Or build individually
-scdoc < extra/man/rio.1.scd > rio.1
-scdoc < extra/man/rio.5.scd > rio.5
-scdoc < extra/man/rio-bindings.5.scd > rio-bindings.5
+scdoc < extra/man/tap.1.scd > tap.1
+scdoc < extra/man/tap.5.scd > tap.5
+scdoc < extra/man/tap-bindings.5.scd > tap-bindings.5
 ```
 
 ### Install man pages
 
 ```bash
 # Install to system man directory (requires sudo)
-sudo cp rio.1 /usr/local/share/man/man1/
-sudo cp rio.5 /usr/local/share/man/man5/
-sudo cp rio-bindings.5 /usr/local/share/man/man5/
+sudo cp tap.1 /usr/local/share/man/man1/
+sudo cp tap.5 /usr/local/share/man/man5/
+sudo cp tap-bindings.5 /usr/local/share/man/man5/
 
 # Update man database
 sudo mandb
@@ -64,9 +64,9 @@ sudo mandb
 ### View man pages
 
 ```bash
-man rio
-man 5 rio
-man 5 rio-bindings
+man tap
+man 5 tap
+man 5 tap-bindings
 ```
 
 ## Format

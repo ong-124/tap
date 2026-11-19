@@ -14,21 +14,21 @@
 
 ## 文件改动
 
-### 1. 新建 `frontends/rioterm/src/input_history.rs`（存储，cfg(not(wasm32))）
+### 1. 新建 `frontends/tapterm/src/input_history.rs`（存储，cfg(not(wasm32))）
 
 - `const MAX_ENTRIES: usize = 10_000`；`struct Entry { ts: u64, cwd: String, line: String }`
-- `store_path()` = `rio_backend::config::config_dir_path().join("input-history")`
+- `store_path()` = `tap_backend::config::config_dir_path().join("input-history")`
 - `load(path, cap) -> Vec<String>`：只返回 line（旧→新序），InputBar 现有 `history` 字段类型不变、10 个旧测试零改动；TSV `splitn(3, '\t')`，不足 2 tab 的坏行跳过；超 cap 重写文件为尾部
 - `append(path, &Entry)`：`OpenOptions::append+create`（O_APPEND）单次 write_all；前置 `create_dir_all(parent)`；ts 取 UNIX_EPOCH 秒；cwd 由调用方传入（模块不做 syscall）
 - 并发：多窗口启动并发重写为良性（后写者胜、均 ≤cap）
 
-### 2. 新建 `frontends/rioterm/src/completion.rs`（补全，纯函数）
+### 2. 新建 `frontends/tapterm/src/completion.rs`（补全，纯函数）
 
 - `gather(word, cwd: Option<&Path>, path_dirs: &[PathBuf]) -> Vec<String>`（cap 100）——**PATH 以参数传入**（测试不能 set_var）；生产包装从 `std::env::var("PATH")` 读
 - 首词判定（word_start==0、无 `/`、非 `~`/`$` 开头）→ PATH 可执行（unix `PermissionsExt::mode() & 0o111`）+ `const SHELL_BUILTINS: [&str; 30]`；否则 fs 模式：`~` 展开、目录列项、隐藏文件按前缀过滤
 - `common_prefix(&[&str]) -> String`；不做 PATH 缓存（首次 Tab 扫描 1-3ms，循环复用已存候选，TTL 缓存不值）
 
-### 3. `frontends/rioterm/src/renderer/input_bar.rs`
+### 3. `frontends/tapterm/src/renderer/input_bar.rs`
 
 - 新字段：`suggestion: Option<String>`、`completion: Option<CompletionState{candidates, index, word_start, word_end}>`、`record_history: bool`、`suggestions: bool`
 - `set_history(Vec<String>)`、`set_options(record, suggestions)`
@@ -38,21 +38,21 @@
 - `set_locked(true)` 清 suggestion/completion
 - render：建议宽度并入 L539 预算式（建议生效时 cursor 必在尾部，两段 view_start 二分原样不动）；caret_x 后以 DIM_TEXT_COLOR 画建议（与 preedit 互斥自然压制），caret rect 盖其首 2px；候选行 `cand_font = font_size*0.5`、`row_y = text_y - cand_font - 6.0`，仅当 `row_y >= panel_y + border_width + 4` 才画，逐段 measure+draw（当前项 TEXT_COLOR 其余 DIM_TEXT_COLOR），超 `content_right` 即止（不用 elide_tail——只保头部）
 
-### 4. `frontends/rioterm/src/screen/mod.rs`
+### 4. `frontends/tapterm/src/screen/mod.rs`
 
 - ArrowRight（L1130）：`if !accept_suggestion() { move_right() }`；End（L1138）：有 suggestion 先 accept 否则 move_end
 - L1112 match 加 `NamedKey::Tab`：读焦点 pane cwd（owned，`teletypewriter::foreground_process_path(*main_fd, shell_pid)`，cfg(not(windows))，仿 context/mod.rs:1462 范式）→ `tab_complete(cwd.as_deref())`，无条件 `return true`
 - `submit_input_bar_line`（L1197）重排：先取 owned cwd → `take_submitted_line()` → **过 `close_if_exited` 检查后**再 `record_history && !line.is_empty()` 时 append 落盘 → send_write（修复：现行 take 后才 close_if_exited，退出的行不能落盘）；相邻去重一致性：仅当 runtime push 发生（`history.last() == Some(&line)`）才 append
 - Screen::new（renderer 创建后 L233）：`renderer.input_bar.set_history(input_history::load(...))`（cfg(not(wasm32))；**不放 Renderer::new**——热重载会白做 IO 且被旧 bar 覆盖）
 
-### 5. `rio-backend/src/config/input_bar.rs` + 接线
+### 5. `tap-backend/src/config/input_bar.rs` + 接线
 
 - InputBarConfig 加 `record_history`（rename `record-history`，default_bool_true）、`suggestions`（default true），字段级 rename 风格；`use crate::config::defaults::default_bool_true`（defaults.rs:4 pub）；Default impl 同步
 - 接线两处：renderer/mod.rs:349-353 初始化加 `set_options`；screen/mod.rs:581-582 热重载 take/restore 加 `old_input_bar.set_options(...)`
 
-### 6. `frontends/rioterm/src/main.rs`
+### 6. `frontends/tapterm/src/main.rs`
 
-- mod 区加 `#[cfg(not(target_arch = "wasm32"))] mod input_history;`、`mod completion;`（wasm 目标保护——rioterm 有 wasm32 target）
+- mod 区加 `#[cfg(not(target_arch = "wasm32"))] mod input_history;`、`mod completion;`（wasm 目标保护——tapterm 有 wasm32 target）
 
 ## 测试（inline，临时文件 temp_dir+唯一名+手工清理，不加依赖）
 
@@ -71,6 +71,6 @@
 
 ## 验证
 
-`cargo build -p rioterm` → `cargo test -p rioterm` → `cargo clippy -p rioterm --all-targets` → `cargo fmt --all`（每步保持绿色，按第 6 节执行顺序推进）
+`cargo build -p tapterm` → `cargo test -p tapterm` → `cargo clippy -p tapterm --all-targets` → `cargo fmt --all`（每步保持绿色，按第 6 节执行顺序推进）
 
 用户手测清单（任务文档记录）：重启 tap 后 ↑ 可回显上次会话命令；虚化建议出现/→ 接受/编辑消失/最近优先；Tab 命令与路径补全、候选行循环、目录 `/` 后缀；分屏焦点切换后 Tab 按 pane cwd 补全；`[input-bar] record-history/suggestions` 热重载；锁定态不出现建议。

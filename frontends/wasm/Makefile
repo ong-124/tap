@@ -9,15 +9,15 @@ run: build opt
 	cargo server --open
 
 opt:
-	du -h ./wasm/rioterm_bg.wasm
-	wasm-opt -O ./wasm/rioterm_bg.wasm -o ./wasm/rioterm_bg.wasm
-	du -h ./wasm/rioterm_bg.wasm
+	du -h ./wasm/tapterm_bg.wasm
+	wasm-opt -O ./wasm/tapterm_bg.wasm -o ./wasm/tapterm_bg.wasm
+	du -h ./wasm/tapterm_bg.wasm
 
 watch:
 	cargo watch -- make build
 
 build:
-	wasm-bindgen ../target/wasm32-unknown-unknown/debug/rioterm.wasm --out-dir wasm --target web --no-typescript
+	wasm-bindgen ../target/wasm32-unknown-unknown/debug/tapterm.wasm --out-dir wasm --target web --no-typescript
 
 build-release:
-	wasm-bindgen ../target/wasm32-unknown-unknown/release/rioterm.wasm --out-dir wasm --target web --no-typescript
+	wasm-bindgen ../target/wasm32-unknown-unknown/release/tapterm.wasm --out-dir wasm --target web --no-typescript

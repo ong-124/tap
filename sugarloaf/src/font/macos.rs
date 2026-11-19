@@ -102,7 +102,7 @@ extern "C" {
     // Returns the best CTFont for rendering `string` in `range`, using
     // `current_font`'s cascade list. When the primary can render every
     // codepoint in the range, CoreText returns the primary unchanged;
-    // otherwise it returns the cascade-picked fallback. Used by Rio's
+    // otherwise it returns the cascade-picked fallback. Used by Tap's
     // lazy font-discovery path to register an unknown cascade font on
     // first encounter rather than pre-registering the full cascade at
     // startup.
@@ -143,8 +143,8 @@ fn ct_font_sheared(base: &CTFont, size: f64) -> CTFont {
 /// Register every `.ttf`/`.otf`/`.ttc`/`.otc` under `dir` with CoreText so
 /// `additional_dirs` fonts become discoverable by descriptor matching.
 ///
-/// Process-scoped: registrations only affect rio, not other apps on the
-/// system, and they disappear when rio exits. Silently skips paths CoreText
+/// Process-scoped: registrations only affect tap, not other apps on the
+/// system, and they disappear when tap exits. Silently skips paths CoreText
 /// rejects (duplicate registration, malformed files) — the rest of the dir
 /// still loads.
 pub fn register_fonts_in_dir(dir: &std::path::Path) {
@@ -270,7 +270,7 @@ impl FontHandle {
     /// can't interpret the buffer (malformed, unsupported format).
     ///
     /// For TTC/OTC collections this picks the first contained font (index
-    /// 0) — matches Rio's cross-platform loader (`FontRef::from_index` with
+    /// 0) — matches Tap's cross-platform loader (`FontRef::from_index` with
     /// index 0). Use [`FontHandle::from_bytes_index`] if a specific index
     /// is needed.
     pub fn from_bytes(font_bytes: &[u8]) -> Option<Self> {
@@ -333,7 +333,7 @@ impl FontHandle {
     }
 
     /// Load a font straight from a file path without reading the bytes
-    /// into Rio.
+    /// into Tap.
     ///
     /// Uses `CTFontManagerCreateFontDescriptorsFromURL` so CoreText reads the
     /// file itself (backing it with an mmap or page cache as it sees fit).
@@ -362,13 +362,13 @@ impl FontHandle {
 
     /// Unique-per-face PostScript name (e.g. "CascadiaMono-Regular",
     /// "AppleColorEmoji"). Used to map a CTFont selected by CoreText's
-    /// cascade fallback back to Rio's `font_id` in [`shape_text`].
+    /// cascade fallback back to Tap's `font_id` in [`shape_text`].
     pub fn postscript_name(&self) -> String {
         self.base_font.postscript_name()
     }
 
     /// Return a derived `FontHandle` with the `wght` variation axis pinned
-    /// to `value`. Used to bake the bold weight into Rio's bold/bold-italic
+    /// to `value`. Used to bake the bold weight into Tap's bold/bold-italic
     /// fallback slots from a single variable-font file.
     ///
     /// The returned CTFont references the same underlying font data — only
@@ -645,7 +645,7 @@ pub fn rasterize_glyph(
     } else {
         cx.set_text_drawing_mode(CGTextDrawingMode::CGTextFill);
     }
-    // Rio snaps text to the cell grid — no subpixel positioning.
+    // Tap snaps text to the cell grid — no subpixel positioning.
     cx.set_allows_font_subpixel_positioning(false);
     cx.set_should_subpixel_position_fonts(false);
     cx.set_allows_font_subpixel_quantization(false);
@@ -659,7 +659,7 @@ pub fn rasterize_glyph(
 
     if is_color {
         // CoreGraphics wrote BGRA premultiplied (due to
-        // `byte_order_32_little | premul_first`). Rio's atlas is RGBA8Unorm
+        // `byte_order_32_little | premul_first`). Tap's atlas is RGBA8Unorm
         // with premultiplied-alpha shader blending, so swap B and R to get
         // RGBA premultiplied. The shader converts P3 → sRGB at sample time.
         bgra_to_rgba_in_place(&mut bytes);
@@ -959,7 +959,7 @@ pub fn all_families() -> Vec<String> {
 }
 
 /// Swap B and R in each 4-byte pixel. CoreGraphics' `premul_first +
-/// byte_order_32_little` writes BGRA; Rio's atlas is RGBA. Alpha stays put.
+/// byte_order_32_little` writes BGRA; Tap's atlas is RGBA. Alpha stays put.
 fn bgra_to_rgba_in_place(bytes: &mut [u8]) {
     for px in bytes.as_chunks_mut::<4>().0 {
         px.swap(0, 2);
@@ -1148,7 +1148,7 @@ pub fn max_ascii_advance_px(handle: &FontHandle, size_px: f32) -> Option<f32> {
 }
 
 /// Font-level attributes read straight from a `CTFont`. Mirrors the subset
-/// of `swash::Attributes` that Rio stores on `FontData` — used
+/// of `swash::Attributes` that Tap stores on `FontData` — used
 /// to build a `FontData` from a path (or static bytes) without parsing the
 /// font file ourselves.
 #[derive(Debug, Clone, Copy)]
@@ -1188,14 +1188,14 @@ pub fn font_attributes(handle: &FontHandle) -> FontAttributes {
 /// - `LastResort`, where the cascade ends. It maps every codepoint to
 ///   a placeholder box naming the codepoint's block, so its charmap
 ///   "covers" everything; registered once, it would win every later
-///   lookup. Rio treats it as not installed, as Ghostty, kitty and
+///   lookup. Tap treats it as not installed, as Ghostty, kitty and
 ///   WezTerm do.
 /// - A font without the codepoint. CoreText hands back the primary
 ///   when it can't do better, for one.
 ///
 /// Neither means no font has the codepoint: the cascade list misses
 /// fonts it doesn't know about, Private Use Area icons in an installed
-/// Nerd Font among them. So on a miss Rio searches the installed fonts
+/// Nerd Font among them. So on a miss Tap searches the installed fonts
 /// itself ([`search_installed_fonts`]), the way Ghostty discovers
 /// fallbacks and kitty recovers from a LastResort answer.
 ///
@@ -1203,7 +1203,7 @@ pub fn font_attributes(handle: &FontHandle) -> FontAttributes {
 /// convention for stored [`FontHandle`]s — per-render sizing goes
 /// through `clone_with_font_size` at shape/raster time.
 ///
-/// Lets Rio register an unknown cascade font on first encounter rather
+/// Lets Tap register an unknown cascade font on first encounter rather
 /// than pre-registering every path-backed fallback at startup.
 pub fn discover_fallback(primary: &FontHandle, ch: char) -> Option<FontHandle> {
     use core_foundation::base::CFIndex;
@@ -1309,12 +1309,12 @@ pub fn font_has_char(handle: &FontHandle, ch: char) -> bool {
 }
 
 /// Scaled line-level metrics for a font at a specific pixel size. Mirrors
-/// the subset of swash's `Metrics` struct that Rio's render path reads.
+/// the subset of swash's `Metrics` struct that Tap's render path reads.
 ///
 /// CoreText exposes ascent/descent/leading/underline/x_height natively;
 /// strikeout has no dedicated API, so we derive it from x_height and
 /// underline thickness the way most OpenType shapers do. Cap height isn't
-/// exposed here yet — Rio's renderer doesn't read it.
+/// exposed here yet — Tap's renderer doesn't read it.
 #[derive(Debug, Clone, Copy)]
 pub struct FontMetrics {
     pub ascent: f32,
@@ -1428,7 +1428,7 @@ pub struct ShapedGlyph {
 ///
 /// If the primary font can't render every codepoint, CoreText may split
 /// the line into multiple CTRuns and substitute from the cascade list.
-/// Rio handles cascade substitution *before* shaping (via
+/// Tap handles cascade substitution *before* shaping (via
 /// `CodepointResolver`-style per-char font resolution with lazy
 /// discovery), so shape calls here normally see a single font. When a
 /// shape-time substitution does slip through, every run's glyphs are
@@ -1456,7 +1456,7 @@ pub fn shape_text(handle: &FontHandle, text: &str, size_px: f32) -> Vec<ShapedGl
     let line = CTLine::new_with_attributed_string(attr.as_concrete_TypeRef());
 
     // CoreText returns string indices as UTF-16 code-unit offsets. Callers
-    // expect UTF-8 byte offsets (that's how Rio slices text), so we need a
+    // expect UTF-8 byte offsets (that's how Tap slices text), so we need a
     // mapping. For pure-ASCII input (vast majority of terminal output) every
     // char is 1 byte in UTF-8 and 1 code unit in UTF-16, so the mapping is
     // the identity — skip building the table entirely.
@@ -1863,7 +1863,7 @@ mod tests {
     fn discover_fallback_handles_covered_char() {
         // For a codepoint the primary font already has, `CTFontCreateForString`
         // returns a font (usually the primary itself). The result must not be
-        // null — Rio's lazy-discovery path relies on that.
+        // null — Tap's lazy-discovery path relies on that.
         let primary =
             FontHandle::from_bytes(FONT_CASCADIA_CODE_NF).expect("load primary");
         let result = discover_fallback(&primary, 'A');
@@ -1893,7 +1893,7 @@ mod tests {
     #[test]
     fn discover_fallback_returns_a_font_for_cjk() {
         // CascadiaMono doesn't have U+6C34 ('水'). CoreText's cascade
-        // must produce *some* font — Rio registers whichever one comes
+        // must produce *some* font — Tap registers whichever one comes
         // back. The test asserts non-null and, to avoid being flaky on
         // different macOS versions, does not hardcode the PS name.
         let primary =
@@ -1921,7 +1921,7 @@ mod tests {
         // the last glyph of every non-first run advance negatively,
         // pulling later text to the left.
         //
-        // Rio's production path avoids shape-time substitution by
+        // Tap's production path avoids shape-time substitution by
         // pre-resolving per-character font_ids (so `shape_text` sees a
         // single-font fragment), but we still exercise the multi-run
         // path here because it's the cheapest invariant to regress on.

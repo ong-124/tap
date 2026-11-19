@@ -1,6 +1,6 @@
-//! libsugarloaf: a C ABI over Rio's `sugarloaf` GPU renderer.
+//! libsugarloaf: a C ABI over Tap's `sugarloaf` GPU renderer.
 //!
-//! Where `librio` wraps the terminal core (parse + VT state + a pull API
+//! Where `libtap` wraps the terminal core (parse + VT state + a pull API
 //! for cells), libsugarloaf wraps the *renderer*: a host (a Swift/AppKit
 //! app) hands it an `NSView`, and sugarloaf owns the `CAMetalLayer`, the
 //! glyph atlas texture, and the GPU compositing/present.

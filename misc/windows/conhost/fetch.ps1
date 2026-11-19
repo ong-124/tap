@@ -1,10 +1,10 @@
 #!/usr/bin/env pwsh
-# Fetches the ConPTY pair Rio ships beside rio.exe on Windows:
+# Fetches the ConPTY pair Tap ships beside tap.exe on Windows:
 # conpty.dll and OpenConsole.exe from the Windows Terminal project,
 # published by Microsoft as the Microsoft.Windows.Console.ConPTY NuGet
 # package (MIT). The release pipeline runs this before packaging; the
 # files land in amd64/ and arm64/ next to this script, one install
-# layout per Rio build, which git ignores. See README.md here for why
+# layout per Tap build, which git ignores. See README.md here for why
 # and how to update.
 #
 # To bump: set $Version to the new package version, run the script
@@ -53,8 +53,8 @@ Expand-Archive -Path $archive -DestinationPath $extracted
 
 # conpty.dll matches the application. OpenConsole.exe matches the
 # machine: conpty.dll looks for it in a subfolder named for the
-# machine's architecture. An x64 Rio also runs on ARM64 machines, so
-# it carries both hosts; an arm64 Rio only runs on ARM64.
+# machine's architecture. An x64 Tap also runs on ARM64 machines, so
+# it carries both hosts; an arm64 Tap only runs on ARM64.
 $files = @(
     @{ src = "runtimes/win-x64/native/conpty.dll";          dst = "amd64/conpty.dll" },
     @{ src = "build/native/runtimes/x64/OpenConsole.exe";   dst = "amd64/x64/OpenConsole.exe" },
