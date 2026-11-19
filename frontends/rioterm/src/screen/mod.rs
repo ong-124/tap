@@ -1838,6 +1838,11 @@ impl Screen<'_> {
                         self.context_manager.select_prev_split();
                         self.mark_dirty();
                     }
+                    Act::SelectSplitDirection(direction) => {
+                        self.cancel_search(clipboard);
+                        self.context_manager.select_split_direction(*direction);
+                        self.mark_dirty();
+                    }
                     Act::SelectNextSplitOrTab => {
                         self.cancel_search(clipboard);
                         self.clear_selection();

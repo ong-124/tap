@@ -238,6 +238,10 @@ pub struct Config {
         alias = "hide-cursor-when-typing"
     )]
     pub hide_cursor_when_typing: bool,
+    /// Ignore all mouse interaction (tap is keyboard-first): clicks,
+    /// drags, wheel and pointer motion have no effect on the terminal.
+    #[serde(default = "default_bool_true", rename = "disable-mouse")]
+    pub disable_mouse: bool,
     #[serde(default = "Renderer::default")]
     pub renderer: Renderer,
     #[serde(default = "bool::default", rename = "draw-bold-text-with-light-colors")]
@@ -756,6 +760,7 @@ impl Default for Config {
             grapheme_clustering: true,
             copy_on_select: false,
             hide_cursor_when_typing: false,
+            disable_mouse: true,
             draw_bold_text_with_light_colors: false,
             hints: Hints::default(),
             bell: Bell::default(),

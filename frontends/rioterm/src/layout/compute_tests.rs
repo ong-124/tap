@@ -1469,6 +1469,74 @@ mod grid {
         assert_eq!(grid.current, b);
     }
 
+    // Vi-style moves cross to the pane in that direction, or stay put
+    // when there is none.
+    #[test]
+    fn directional_moves_follow_the_pane_geometry() {
+        let mut g = grid(1.0);
+        let a = g.current;
+        let b = split(&mut g, true);
+        let d = split(&mut g, false); // under b
+        g.current = a;
+        let c = split(&mut g, false); // under a
+
+        use SplitDirection as Dir;
+        // a: top-left
+        g.current = a;
+        assert!(g.select_split_direction(Dir::Right));
+        assert_eq!(g.current, b);
+        assert!(g.select_split_direction(Dir::Left));
+        assert_eq!(g.current, a);
+        assert!(g.select_split_direction(Dir::Down));
+        assert_eq!(g.current, c);
+        assert!(g.select_split_direction(Dir::Up));
+        assert_eq!(g.current, a);
+
+        // d: bottom-right — no pane right or below it.
+        g.current = d;
+        assert!(!g.select_split_direction(Dir::Right));
+        assert_eq!(g.current, d);
+        assert!(!g.select_split_direction(Dir::Down));
+        assert_eq!(g.current, d);
+        assert!(g.select_split_direction(Dir::Up));
+        assert_eq!(g.current, b);
+        assert!(g.select_split_direction(Dir::Down));
+        assert_eq!(g.current, d);
+        assert!(g.select_split_direction(Dir::Left));
+        assert_eq!(g.current, c);
+
+        // A single pane has nowhere to go.
+        for dir in [Dir::Left, Dir::Down, Dir::Up, Dir::Right] {
+            let mut single = grid(1.0);
+            assert!(!single.select_split_direction(dir));
+        }
+    }
+
+    // With two panes stacked on the far side, the move picks the one
+    // aligned with the current pane, not the nearest edge.
+    #[test]
+    fn directional_moves_prefer_the_aligned_pane() {
+        let mut grid = grid(1.0);
+        let a = grid.current;
+        let b = split(&mut grid, true); // right column
+        let d = split(&mut grid, false); // bottom of right column
+        grid.current = a;
+
+        use SplitDirection as Dir;
+        assert!(grid.select_split_direction(Dir::Right));
+        assert_eq!(
+            grid.current, b,
+            "from the top-left pane, right goes to the top-right pane"
+        );
+        assert!(grid.select_split_direction(Dir::Down));
+        assert_eq!(grid.current, d);
+        assert!(grid.select_split_direction(Dir::Left));
+        assert_eq!(
+            grid.current, a,
+            "from the bottom-right pane, left goes to the aligned left pane"
+        );
+    }
+
     // Growing the window keeps the proportion of a moved divider, and
     // the panes always fill the available width. (Shrinking drifts by
     // the padding share; see the follow-up on shrink weighting.)

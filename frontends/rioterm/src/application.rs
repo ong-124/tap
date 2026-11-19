@@ -1415,6 +1415,22 @@ impl ApplicationHandler<EventPayload> for Application<'_> {
             return;
         }
 
+        // `disable-mouse` (default): tap is keyboard-first, pointer
+        // events never reach the screen — no selection, no drags, no
+        // mouse-reporting to the PTY.
+        if self.config.disable_mouse
+            && matches!(
+                event,
+                WindowEvent::MouseInput { .. }
+                    | WindowEvent::CursorMoved { .. }
+                    | WindowEvent::CursorLeft { .. }
+                    | WindowEvent::MouseWheel { .. }
+                    | WindowEvent::Touch(_)
+            )
+        {
+            return;
+        }
+
         // The event loop keys on rio-window's id; the router keys on the
         // core's `WindowId`. Convert once at this boundary.
         let window_id: rio_backend::event::WindowId = window_id.into();

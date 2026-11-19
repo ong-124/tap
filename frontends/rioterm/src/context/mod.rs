@@ -778,6 +778,12 @@ impl<T: EventListener + Clone + std::marker::Send + 'static> ContextManager<T> {
     }
 
     #[inline]
+    pub fn select_split_direction(&mut self, direction: crate::layout::SplitDirection) {
+        self.contexts[self.current_index].select_split_direction(direction);
+        self.sync_current_route();
+    }
+
+    #[inline]
     pub fn switch_to_next_split_or_tab(&mut self) {
         if self.contexts[self.current_index].select_next_split_no_loop() {
             self.sync_current_route();

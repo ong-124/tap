@@ -6,6 +6,7 @@ pub mod kitty_keyboard;
 
 use crate::crosswords::vi_mode::ViMotion;
 use crate::crosswords::Mode;
+use crate::layout::SplitDirection;
 use bitflags::bitflags;
 use rio_backend::config::bindings::KeyBinding as ConfigKeyBinding;
 use rio_backend::config::keyboard::Keyboard as ConfigKeyboard;
@@ -264,6 +265,12 @@ impl From<String> for Action {
             "splitdown" => Some(Action::SplitDown),
             "selectnextsplit" => Some(Action::SelectNextSplit),
             "selectprevsplit" => Some(Action::SelectPrevSplit),
+            "selectsplitleft" => Some(Action::SelectSplitDirection(SplitDirection::Left)),
+            "selectsplitdown" => Some(Action::SelectSplitDirection(SplitDirection::Down)),
+            "selectsplitup" => Some(Action::SelectSplitDirection(SplitDirection::Up)),
+            "selectsplitright" => {
+                Some(Action::SelectSplitDirection(SplitDirection::Right))
+            }
             "selectnextsplitortab" => Some(Action::SelectNextSplitOrTab),
             "selectprevsplitortab" => Some(Action::SelectPrevSplitOrTab),
             "movedividerup" => Some(Action::MoveDividerUp),
@@ -506,6 +513,9 @@ pub enum Action {
 
     /// Select previous split
     SelectPrevSplit,
+
+    /// Select the pane in a vi-style direction (h/j/k/l)
+    SelectSplitDirection(SplitDirection),
 
     /// Select next split if available if not next tab
     SelectNextSplitOrTab,
@@ -1198,8 +1208,6 @@ pub fn platform_key_bindings(
             Key::Named(Tab), ModifiersState::CONTROL; Action::SelectNextTab;
             Key::Named(Tab), prefix; Action::SelectPrevTab;
             "w", ModifiersState::SUPER; Action::CloseCurrentSplitOrTab;
-            "[", ModifiersState::SUPER | ModifiersState::SHIFT; Action::SelectPrevTab;
-            "]", ModifiersState::SUPER | ModifiersState::SHIFT; Action::SelectNextTab;
             "1", ModifiersState::SUPER; Action::SelectTab(0);
             "2", ModifiersState::SUPER; Action::SelectTab(1);
             "3", ModifiersState::SUPER; Action::SelectTab(2);
@@ -1227,8 +1235,10 @@ pub fn platform_key_bindings(
             KeyBinding;
             "d", ModifiersState::SUPER, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SplitRight;
             "d", ModifiersState::SUPER | ModifiersState::SHIFT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SplitDown;
-            "]", ModifiersState::SUPER, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectNextSplit;
-            "[", ModifiersState::SUPER, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectPrevSplit;
+            "h", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Left);
+            "j", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Down);
+            "k", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Up);
+            "l", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Right);
             Key::Named(ArrowUp), ModifiersState::CONTROL | ModifiersState::SUPER, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerUp;
             Key::Named(ArrowDown), ModifiersState::CONTROL | ModifiersState::SUPER, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerDown;
             Key::Named(ArrowLeft), ModifiersState::CONTROL | ModifiersState::SUPER, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerLeft;
@@ -1279,9 +1289,16 @@ pub fn platform_key_bindings(
             "t", prefix; Action::TabCreateNew;
             Key::Named(Tab), ModifiersState::CONTROL; Action::SelectNextTab;
             Key::Named(Tab), prefix; Action::SelectPrevTab;
-            "[", prefix; Action::SelectPrevTab;
-            "]", prefix; Action::SelectNextTab;
             "w", prefix; Action::CloseCurrentSplitOrTab;
+            "1", prefix; Action::SelectTab(0);
+            "2", prefix; Action::SelectTab(1);
+            "3", prefix; Action::SelectTab(2);
+            "4", prefix; Action::SelectTab(3);
+            "5", prefix; Action::SelectTab(4);
+            "6", prefix; Action::SelectTab(5);
+            "7", prefix; Action::SelectTab(6);
+            "8", prefix; Action::SelectTab(7);
+            "9", prefix; Action::SelectLastTab;
         ));
     }
 
@@ -1290,8 +1307,10 @@ pub fn platform_key_bindings(
             KeyBinding;
             "r", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SplitRight;
             "d", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SplitDown;
-            "]", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectNextSplit;
-            "[", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectPrevSplit;
+            "h", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Left);
+            "j", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Down);
+            "k", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Up);
+            "l", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Right);
             Key::Named(ArrowUp), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerUp;
             Key::Named(ArrowDown), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerDown;
             Key::Named(ArrowLeft), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerLeft;
@@ -1349,8 +1368,15 @@ pub fn platform_key_bindings(
             Key::Named(Tab), ModifiersState::CONTROL; Action::SelectNextTab;
             Key::Named(Tab), prefix; Action::SelectPrevTab;
             "w", prefix; Action::CloseCurrentSplitOrTab;
-            "[", prefix; Action::SelectPrevTab;
-            "]", prefix; Action::SelectNextTab;
+            "1", prefix; Action::SelectTab(0);
+            "2", prefix; Action::SelectTab(1);
+            "3", prefix; Action::SelectTab(2);
+            "4", prefix; Action::SelectTab(3);
+            "5", prefix; Action::SelectTab(4);
+            "6", prefix; Action::SelectTab(5);
+            "7", prefix; Action::SelectTab(6);
+            "8", prefix; Action::SelectTab(7);
+            "9", prefix; Action::SelectLastTab;
         ));
     }
 
@@ -1359,8 +1385,10 @@ pub fn platform_key_bindings(
             KeyBinding;
             "r", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SplitRight;
             "d", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SplitDown;
-            "]", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectNextSplit;
-            "[", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectPrevSplit;
+            "h", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Left);
+            "j", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Down);
+            "k", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Up);
+            "l", prefix, ~BindingMode::SEARCH, ~BindingMode::VI; Action::SelectSplitDirection(SplitDirection::Right);
             Key::Named(ArrowUp), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerUp;
             Key::Named(ArrowDown), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerDown;
             Key::Named(ArrowLeft), prefix | ModifiersState::ALT, ~BindingMode::SEARCH, ~BindingMode::VI; Action::MoveDividerLeft;

@@ -26,6 +26,15 @@ pub enum BorderDirection {
     Horizontal,
 }
 
+/// Direction of a vi-style focus move between sibling panes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitDirection {
+    Left,
+    Down,
+    Up,
+    Right,
+}
+
 /// Describes a draggable border between two panels
 #[derive(Debug, Clone, Copy)]
 pub struct PanelBorder {
@@ -1327,6 +1336,76 @@ impl<T: rio_backend::event::EventListener> ContextGrid<T> {
             }
         }
         false
+    }
+
+    /// Move the focus one pane in the given direction, vi-style: the
+    /// candidate with the largest overlap on the perpendicular axis
+    /// wins, ties go to the nearest pane along the move direction.
+    /// Returns whether the focus moved.
+    #[inline]
+    pub fn select_split_direction(&mut self, direction: SplitDirection) -> bool {
+        if self.inner.len() == 1 {
+            return false;
+        }
+
+        let Some(current_item) = self.inner.get(&self.current) else {
+            return false;
+        };
+        let [cx, cy, cw, ch] = current_item.layout_rect;
+        let (cur_right, cur_bottom) = (cx + cw, cy + ch);
+        // Half a pixel of slack so panes that merely touch count as
+        // neighbors despite float rounding in the layout pass.
+        const EPS: f32 = 0.5;
+
+        let mut best: Option<(f32, f32, NodeId)> = None; // (overlap, closeness, id)
+        for (&id, item) in self.inner.iter() {
+            if id == self.current {
+                continue;
+            }
+            let [ix, iy, iw, ih] = item.layout_rect;
+            let (i_right, i_bottom) = (ix + iw, iy + ih);
+
+            let (closeness, overlap) = match direction {
+                SplitDirection::Left if i_right <= cx + EPS => (
+                    cx - i_right,
+                    (cur_bottom.min(i_bottom) - cy.max(iy)).max(0.0),
+                ),
+                SplitDirection::Right if ix >= cur_right - EPS => (
+                    ix - cur_right,
+                    (cur_bottom.min(i_bottom) - cy.max(iy)).max(0.0),
+                ),
+                SplitDirection::Up if i_bottom <= cy + EPS => (
+                    cy - i_bottom,
+                    (cur_right.min(i_right) - cx.max(ix)).max(0.0),
+                ),
+                SplitDirection::Down if iy >= cur_bottom - EPS => (
+                    iy - cur_bottom,
+                    (cur_right.min(i_right) - cx.max(ix)).max(0.0),
+                ),
+                _ => continue,
+            };
+
+            let better = match best {
+                None => true,
+                // Prefer the pane aligned with the current one; among
+                // those, the closest in the move direction.
+                Some((best_overlap, best_closeness, _)) => {
+                    overlap > best_overlap + EPS
+                        || ((overlap - best_overlap).abs() <= EPS
+                            && closeness < best_closeness)
+                }
+            };
+            if better {
+                best = Some((overlap, closeness, id));
+            }
+        }
+
+        if let Some((_, _, id)) = best {
+            self.current = id;
+            true
+        } else {
+            false
+        }
     }
 
     #[inline]
