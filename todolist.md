@@ -39,3 +39,9 @@
   - `[[bin]] name` rio → tap（target/{debug,release}/tap），deb 资源路径同步
   - APPLICATION_ID "Rio" → "Tap"（WM_CLASS / Wayland app_id），desktop 文件改名 tap.desktop 并同步 Exec/Icon/StartupWMClass
   - Makefile release 目标产物路径更新；nix/TERM_PROGRAM/缓存目录等品牌残留未动（见任务文档）
+- [x] 【已完成】快捷键去重与屏蔽鼠标（[详情](task/20261119-1310_快捷键去重与屏蔽鼠标.md)）
+  - 去掉 `[` / `]` 的标签与分屏循环切换默认绑定（action 保留可自绑）
+  - 标签：Ctrl+Tab 下一个、`<leader>`+Tab 上一个、`<leader>`+1…8 切第 n 个、`<leader>`+9 最后一个（三平台统一，macOS 保留 Super+数字）
+  - 分屏焦点 vi 风格方向切换：`<leader>`+H/J/K/L（左/下/上/右），基于 pane 几何（重叠优先、就近平手、无候选不动、不跨标签）；新增 `selectsplitleft/down/up/right` action
+  - 鼠标默认屏蔽：新增 `disable-mouse`（默认 true，热重载），事件入口丢弃 MouseInput/CursorMoved/CursorLeft/MouseWheel/Touch，不向 PTY 转发
+  - 快捷键清单全量更新（含底部输入栏小节、鼠标小节）；验证：rioterm 308 测试通过（含 2 个新几何测试）、clippy/fmt 干净，待用户实测
