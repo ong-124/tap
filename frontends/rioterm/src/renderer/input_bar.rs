@@ -109,15 +109,16 @@ pub struct InputBar {
 }
 
 /// Tab-completion cycle: the word region it owns, the word currently
-/// in the buffer, the candidate list and which candidate applies on
-/// the next Tab press.
+/// in the buffer, the candidate list and which candidate sits in the
+/// buffer right now (`candidates.len()` = sentinel for "only the LCP
+/// is shown, the menu starts on the next Tab").
 struct CompletionState {
     /// Char index where the completed word begins.
     word_start: usize,
     /// Word text currently in the buffer (LCP or last candidate).
     current: String,
     candidates: Vec<crate::completion::Candidate>,
-    /// Candidate applied when Tab cycles next.
+    /// Candidate currently applied; the render highlights this one.
     index: usize,
 }
 
@@ -364,16 +365,22 @@ impl InputBar {
         let (word_start, word) = self.word_before_cursor();
 
         // Cycle: same word start and same word text as the live state.
+        // `index` is the candidate currently sitting in the buffer, so
+        // the highlight always matches what was applied.
         if let Some(state) = self.completion.take() {
             if state.word_start == word_start
                 && state.current == word
                 && !state.candidates.is_empty()
             {
-                let candidate = &state.candidates[state.index];
-                let insert = candidate.insert.clone();
+                let next = if state.index >= state.candidates.len() {
+                    0
+                } else {
+                    (state.index + 1) % state.candidates.len()
+                };
+                let insert = state.candidates[next].insert.clone();
                 self.apply_word(word_start, &insert);
                 self.completion = Some(CompletionState {
-                    index: (state.index + 1) % state.candidates.len(),
+                    index: next,
                     current: insert,
                     ..state
                 });
@@ -405,11 +412,20 @@ impl InputBar {
                 if prefix.chars().count() > word.chars().count() {
                     self.apply_word(word_start, &prefix);
                 }
+                // When the LCP is a full candidate it already sits in
+                // the buffer (index 0); otherwise the menu has not
+                // started — the sentinel `len` makes the next Tab apply
+                // candidates[0], and the row highlights it as upcoming.
+                let index = if candidates[0].insert == prefix {
+                    0
+                } else {
+                    candidates.len()
+                };
                 self.completion = Some(CompletionState {
                     word_start,
                     current: prefix,
                     candidates,
-                    index: 0,
+                    index,
                 });
                 self.refresh_suggestion();
             }
@@ -737,6 +753,13 @@ impl InputBar {
                 let row_y = text_y - cand_font - 6.0;
                 if row_y >= panel_y + border_width + 4.0 {
                     let max_row_width = (content_right - content_x).max(0.0);
+                    // The candidate in the buffer (sentinel `len` =
+                    // LCP only shown → the first candidate is next up).
+                    let highlighted = if state.index >= state.candidates.len() {
+                        0
+                    } else {
+                        state.index
+                    };
                     let mut measure_candidate = |text: &str, color: [f32; 4]| -> f32 {
                         let opts = DrawOpts {
                             font_size: cand_font,
@@ -752,7 +775,7 @@ impl InputBar {
                         .collect();
                     // Walk back from the highlighted candidate while
                     // the older ones still fit alongside it.
-                    let mut start = state.index.min(widths.len() - 1);
+                    let mut start = highlighted;
                     let mut total = widths[start];
                     while start > 0
                         && total + CANDIDATE_GAP + widths[start - 1] <= max_row_width
@@ -763,7 +786,7 @@ impl InputBar {
                     let mut x = content_x;
                     for (i, candidate) in state.candidates.iter().enumerate().skip(start)
                     {
-                        let color = if i == state.index {
+                        let color = if i == highlighted {
                             TEXT_COLOR
                         } else {
                             DIM_TEXT_COLOR
@@ -1309,10 +1332,8 @@ mod tests {
         assert_eq!(bar.buffer, "foobar", "first Tab completes the LCP");
         assert!(bar.completion.is_some());
 
-        // Further Tabs walk the sorted candidates; the LCP word is a
-        // real candidate, so it comes around first.
-        bar.tab_complete(&sources);
-        assert_eq!(bar.buffer, "foobar");
+        // The LCP already sits in the buffer, so the next Tab moves
+        // straight to the next candidate and then wraps around.
         bar.tab_complete(&sources);
         assert_eq!(bar.buffer, "foobar2");
         bar.tab_complete(&sources);
@@ -1321,6 +1342,61 @@ mod tests {
         // Any edit invalidates the cycle state.
         bar.backspace();
         assert!(bar.completion.is_none());
+    }
+
+    #[test]
+    fn cycle_highlight_matches_the_buffer_word() {
+        // The autossh case: the LCP ("autossh") is itself a candidate,
+        // so the fresh highlight must sit on it, not on the next one.
+        let dir = TempDirGuard::new("highlight");
+        write_exec(dir.path(), "autossh");
+        write_exec(dir.path(), "autossh-arv0");
+        let sources = dir.sources(None);
+
+        let mut bar = InputBar::new(true);
+        bar.insert_text("auto");
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "autossh");
+        assert_eq!(
+            bar.completion.as_ref().unwrap().index,
+            0,
+            "highlight the candidate actually in the buffer"
+        );
+
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "autossh-arv0");
+        assert_eq!(
+            bar.completion.as_ref().unwrap().index,
+            1,
+            "highlight follows the applied candidate"
+        );
+
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "autossh");
+        assert_eq!(bar.completion.as_ref().unwrap().index, 0, "wraps back");
+    }
+
+    #[test]
+    fn lcp_only_shown_starts_the_menu_at_the_first_candidate() {
+        let dir = TempDirGuard::new("lcponly");
+        write_exec(dir.path(), "foobar");
+        write_exec(dir.path(), "foobaz");
+        let sources = dir.sources(None);
+
+        let mut bar = InputBar::new(true);
+        bar.insert_text("foo");
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "fooba", "LCP is not a full candidate");
+        let state = bar.completion.as_ref().unwrap();
+        assert_eq!(state.index, state.candidates.len(), "menu not started");
+
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "foobar", "first candidate comes first");
+        assert_eq!(bar.completion.as_ref().unwrap().index, 0);
+
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "foobaz");
+        assert_eq!(bar.completion.as_ref().unwrap().index, 1);
     }
 
     #[test]
