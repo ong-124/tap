@@ -1078,18 +1078,13 @@ impl Screen<'_> {
     }
 
     /// Whether the unified input bar currently owns character input:
-    /// enabled, and the focused pane sits at a shell prompt (OSC 133
-    /// zone; shells without marks degrade to always-at-prompt) outside
-    /// the alt screen.
+    /// enabled, and the focused pane is outside the alt screen — the
+    /// home of full-screen programs (vim, nano, less, tmux, ...).
+    /// Everything else keeps the bar usable, including `ssh` sessions:
+    /// a remote prompt has no OSC 133 marks, so a zone-based lock would
+    /// never recover there.
     fn input_bar_active(&self, mode: &Mode) -> bool {
-        self.renderer.input_bar.is_enabled() && !self.input_bar_locked(mode)
-    }
-
-    /// The bar steps aside while a command runs: no OSC 133 prompt
-    /// zone, or a full-screen program took over the grid.
-    fn input_bar_locked(&self, mode: &Mode) -> bool {
-        let terminal = self.context_manager.current().terminal.lock();
-        !terminal.at_prompt() || mode.contains(Mode::ALT_SCREEN)
+        self.renderer.input_bar.is_enabled() && !mode.contains(Mode::ALT_SCREEN)
     }
 
     /// Route a key press to the unified input bar. Returns `true` when
@@ -4310,17 +4305,17 @@ impl Screen<'_> {
             self.renderer.set_active_search(None);
         }
 
-        // Sync the input bar lock with the focused pane's zone before
-        // the overlay pass draws it.
+        // Sync the input bar lock with the focused pane before the
+        // overlay pass draws it.
         if self.renderer.input_bar.is_enabled() {
-            let (at_prompt, alt_screen) = {
-                let terminal = self.context_manager.current().terminal.lock();
-                (
-                    terminal.at_prompt(),
-                    terminal.mode().contains(Mode::ALT_SCREEN),
-                )
-            };
-            self.renderer.input_bar.set_locked(!at_prompt || alt_screen);
+            let alt_screen = self
+                .context_manager
+                .current()
+                .terminal
+                .lock()
+                .mode()
+                .contains(Mode::ALT_SCREEN);
+            self.renderer.input_bar.set_locked(alt_screen);
         }
 
         if is_search_active {
