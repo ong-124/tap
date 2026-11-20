@@ -115,3 +115,7 @@
   - 空洞修复：ssh 会话内非 Cobra 命令的词与 one-shot 行远程词原为 Route::None（cd Tab 无效果），新增 DynamicRequest::RemotePaths 走侧信道 compgen -A file；会话内首词按路径形态（/、~、. 开头）分流 RemotePaths/RemoteCommands
   - 脚本语义：裸词锚定远程 home（侧信道 cwd 恒为 home，交互 shell cwd 不可见是已知边界）、目录头词精确走头、~ 展开并回映射 `~/`（替换文本裸 ~ 会被 tilde 展开的坑用 \~ 解决）、隐藏项点号门控、目录尾 `/` 由 mark_trailing_slash_dirs 镜像 is_dir、head -n 100 截线
   - 验证：tapterm 381（+2）测试通过，clippy/fmt 干净，脚本行为 fake HOME 本地实测通过；待用户手测（ssh 后 cd Tab 列目录、逐层下降、~/ 保头；深层目录相对补全锚定 home 为已知边界）
+- [ ] 【待开始】ssh 会话裸词远程 cwd 锚定（[详情](task/20261120-1733_ssh会话裸词cwd锚定.md)）
+  - 梯度一：pane OSC 7 真值作 RemotePaths anchor（Sources 加 session_remote_cwd，screen 层 ssh 会话内直读 current_directory 组装，cd 失败天然回落；hostname 形式 OSC 7 被既有 host 校验拒收为已知限界）
+  - 梯度二：远程脚本内 /proc 探测（同 uid、comm∈shell 表、fd/0 指向 pts、starttime 最新者 cwd）cd 后再跑现有 compgen 管道，探测失败留在 home
+  - 梯度三：远程 home 兜底不变；顺带修正 ssh 会话内 sources.cwd 错位（ghost/提交元数据改 OSC 7-only）；v2 端口精确匹配（ss + SSH_CONNECTION）为演进方向不进本任务
