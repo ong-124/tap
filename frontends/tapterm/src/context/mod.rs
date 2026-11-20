@@ -13,11 +13,16 @@ use crate::performer::handler::Handler;
 use crate::performer::{self, Machine};
 use renderable::Cursor;
 use renderable::RenderableContent;
+use smallvec::{smallvec, SmallVec};
 use tap_backend::config::layout::Margin;
 use tap_backend::config::Shell;
-use smallvec::{smallvec, SmallVec};
 
 use crate::layout::{BorderDirection, GridId, PanelImages, ResizeState};
+use std::error::Error;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::thread::JoinHandle;
+use std::time::Instant;
 use tap_backend::crosswords::pos::{CharsetIndex, StandardCharset};
 use tap_backend::crosswords::{Crosswords, MIN_COLUMNS, MIN_LINES};
 use tap_backend::error::{TapError, TapErrorLevel, TapErrorType};
@@ -25,11 +30,6 @@ use tap_backend::event::EventListener;
 use tap_backend::event::WindowId;
 use tap_backend::selection::SelectionRange;
 use tap_backend::sugarloaf::{font::SugarloafFont, SugarloafErrors};
-use std::error::Error;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::thread::JoinHandle;
-use std::time::Instant;
 
 // Global atomic counter for generating unique route IDs
 static ROUTE_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -1304,6 +1304,20 @@ impl<T: EventListener + Clone + std::marker::Send + 'static> ContextManager<T> {
     #[inline]
     pub fn current_grid(&self) -> &ContextGrid<T> {
         &self.contexts[self.current_index]
+    }
+
+    /// Like [`Self::current`], but addressing the mouse selection
+    /// target pane (the pane latched under the pointer during a
+    /// press–drag–release cycle, else the focused pane).
+    #[inline]
+    pub fn mouse_target(&self) -> &Context<T> {
+        self.current_grid().mouse_target()
+    }
+
+    /// Mutable [`Self::mouse_target`].
+    #[inline]
+    pub fn mouse_target_mut(&mut self) -> &mut Context<T> {
+        self.current_grid_mut().mouse_target_mut()
     }
 
     #[inline]

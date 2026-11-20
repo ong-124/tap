@@ -1553,15 +1553,17 @@ impl ApplicationHandler<EventPayload> for Application<'_> {
                                 _ => ClickState::Click,
                             };
 
-                            // Focus the pane under the pointer first, so a
-                            // drag starting there selects in that pane.
-                            if route.window.screen.select_current_based_on_mouse() {
-                                route.request_redraw();
-                                return;
-                            }
+                            // No click-to-focus: latch the pane under the
+                            // pointer as this press–drag–release cycle's
+                            // selection target. A drag or double/triple
+                            // click starting there selects in that pane
+                            // while keyboard focus (input routing, input
+                            // bar, focus ring) stays on the focused pane.
+                            route.window.screen.begin_mouse_selection_cycle();
 
                             if let MouseButton::Left = button {
-                                let display_offset = route.window.screen.display_offset();
+                                let display_offset =
+                                    route.window.screen.mouse_selection_display_offset();
                                 let pos =
                                     route.window.screen.mouse_position(display_offset);
                                 route
@@ -1607,6 +1609,10 @@ impl ApplicationHandler<EventPayload> for Application<'_> {
                                     );
                                 }
                             }
+
+                            // The cycle is over; selection ops go back to
+                            // the focused pane.
+                            route.window.screen.end_mouse_selection_cycle();
                         }
                     }
                     return;
@@ -2039,7 +2045,8 @@ impl ApplicationHandler<EventPayload> for Application<'_> {
                             }
                         }
 
-                        let display_offset = route.window.screen.display_offset();
+                        let display_offset =
+                            route.window.screen.mouse_selection_display_offset();
                         let point = route.window.screen.mouse_position(display_offset);
                         let square_side = route.window.screen.side_by_pos(x);
                         route.window.screen.mouse.square_side = square_side;
@@ -2521,6 +2528,13 @@ impl ApplicationHandler<EventPayload> for Application<'_> {
                     route.window.screen.mouse.left_button_state = ElementState::Released;
                     route.window.screen.mouse.hint_click_latched = None;
                     route.window.winit_window.set_cursor(CursorIcon::Default);
+                }
+
+                // A selection drag's release never arrives after focus
+                // loss either; drop the mouse selection target latch so
+                // later selection ops go back to the focused pane.
+                if !focused {
+                    route.window.screen.end_mouse_selection_cycle();
                 }
 
                 // Focus is a cheap checkpoint to catch backing-scale changes

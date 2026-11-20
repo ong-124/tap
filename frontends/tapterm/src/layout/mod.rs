@@ -3,11 +3,11 @@ mod compute_tests;
 
 use crate::context::Context;
 use crate::mouse::Mouse;
+use rustc_hash::FxHashMap;
 use tap_backend::config::layout::Margin;
 use tap_backend::crosswords::grid::Dimensions;
 use tap_backend::event::EventListener;
 use tap_backend::sugarloaf::{layout::TextDimensions, Sugarloaf};
-use rustc_hash::FxHashMap;
 
 use taffy::{
     geometry, style_helpers::length, AvailableSpace, Display, NodeId, Style, TaffyError,
@@ -217,6 +217,12 @@ pub struct ContextGrid<T: EventListener> {
     /// Bumped whenever a panel is added or removed, so a reference to
     /// the tree taken earlier can tell the tree changed under it.
     shape: u64,
+    /// Pane that mouse-driven selection ops address while a
+    /// press–drag–release cycle is in flight, latched at press time.
+    /// `disable-mouse` has no click-to-focus, so a drag in an
+    /// unfocused pane selects there without moving the keyboard focus
+    /// (`current`). `None` → follow `current`.
+    mouse_pane: Option<NodeId>,
 }
 
 pub struct ContextGridItem<T: EventListener> {
@@ -416,6 +422,7 @@ impl<T: tap_backend::event::EventListener> ContextGrid<T> {
             border_config,
             id: GridId(id),
             shape: 0,
+            mouse_pane: None,
         };
         grid.calculate_positions();
         grid
@@ -1519,6 +1526,91 @@ impl<T: tap_backend::event::EventListener> ContextGrid<T> {
         }
 
         false
+    }
+
+    /// Latch the pane under the pointer as this press–drag–release
+    /// cycle's mouse selection target. Unlike
+    /// [`Self::select_current_based_on_mouse`], the keyboard focus
+    /// (`current`) never moves. Returns true when a different pane was
+    /// latched; single-pane grids and clicks on the focused pane (or
+    /// on gaps/padding) latch nothing.
+    #[inline]
+    pub fn mouse_selection_target_begin(&mut self, mouse: &Mouse) -> bool {
+        if self.inner.len() <= 1 {
+            return false;
+        }
+
+        let x = mouse.x as f32;
+        let y = mouse.y as f32;
+
+        if let Some(context_id) = self.find_context_at_position(x, y) {
+            if context_id != self.current {
+                self.mouse_pane = Some(context_id);
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Drop the mouse selection target latch (button release or focus
+    /// loss); selection ops go back to the focused pane.
+    #[inline]
+    pub fn mouse_selection_target_end(&mut self) {
+        self.mouse_pane = None;
+    }
+
+    /// Pane mouse-driven ops address: the latched pane under the
+    /// pointer, else the keyboard-focused pane.
+    #[inline]
+    fn mouse_target_key(&self) -> NodeId {
+        self.mouse_pane.unwrap_or(self.current)
+    }
+
+    /// Like [`Self::current`], but for the mouse selection target.
+    #[inline]
+    pub fn mouse_target(&self) -> &Context<T> {
+        let key = self.mouse_target_key();
+        if let Some(item) = self.inner.get(&key) {
+            &item.val
+        } else {
+            // A stale latch (pane closed mid-drag) falls back to focus.
+            self.current()
+        }
+    }
+
+    /// Like [`Self::current_mut`], but for the mouse selection target.
+    #[inline]
+    pub fn mouse_target_mut(&mut self) -> &mut Context<T> {
+        let key = self.mouse_target_key();
+        if !self.inner.contains_key(&key) {
+            return self.current_mut();
+        }
+        &mut self.inner.get_mut(&key).expect("checked above").val
+    }
+
+    /// Like [`Self::current_context_with_computed_dimension`], but for
+    /// the mouse selection target: the margin carries the latched
+    /// pane's absolute offset so window-relative mouse coordinates map
+    /// into that pane's grid.
+    #[inline]
+    pub fn mouse_target_with_computed_dimension(&self) -> (&Context<T>, Margin) {
+        let key = self.mouse_target_key();
+        if let Some(item) = self.inner.get(&key) {
+            if self.inner.len() <= 1 {
+                return (&item.val, self.scaled_margin);
+            }
+            let [abs_x, abs_y, _, _] = item.layout_rect;
+            let margin = Margin {
+                left: self.scaled_margin.left + abs_x,
+                top: self.scaled_margin.top + abs_y,
+                right: self.scaled_margin.right,
+                bottom: self.scaled_margin.bottom,
+            };
+            (&item.val, margin)
+        } else {
+            self.current_context_with_computed_dimension()
+        }
     }
 
     #[inline]

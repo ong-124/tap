@@ -98,3 +98,7 @@
   - 上游价值梯度：tap-vt/teletypewriter/tap-window/sugarloaf 修复与安全补丁按 release 评估移植；性能/图像协议按需；上游产品功能/打包/品牌跳过
   - 机制：改名后 merge 不可用 → port 模式（cherry-pick/手工移植套改名映射，保护词清单见 20261119-2244）；判停=上游大重构致移植成本超自修
   - remote：upstream → git@github.com:raphamorim/rio.git（真实上游，SSH fetch-only，push 置 DISABLED；本机 HTTPS 到 GitHub 不通，raphamorim/tap 为改名机械替换死链、仓库不存在）
+- [x] 【已完成】鼠标点击不改 pane 焦点（[详情](task/20261120-1606_鼠标不改pane焦点.md)）
+  - disable-mouse 路径去 click-to-focus：按下时把指针所在 pane 锁定为本次选择周期目标（ContextGrid mouse_pane latch），拖拽/双击/三击选区落指针 pane，键盘焦点、输入栏路由、焦点环、CSI 焦点报告全程不动
+  - Screen 选择类 helper 改寻址目标 pane（latch 未生效回落焦点 pane，完整鼠标路径行为零变化）；latch 于松开与窗口失焦时释放；中键粘贴仍进键盘焦点 pane；`disable-mouse = false` 的 click-to-focus 保留（vim 鼠标上报路由依赖）
+  - 验证：tap-backend 229 / tapterm 376（+1 latch 测试）通过，clippy/fmt（触碰文件）干净；既有遗留不顺手修（tap-vt test_single_capability_requests 改名残留失败、clippy manual_slice_fill、18 文件 import 乱序）；release 已重建，待用户手测（点击不抢焦点、未聚焦 pane 拖拽选中、中键粘贴回焦点 pane、拖拽中关 pane）

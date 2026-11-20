@@ -31,6 +31,8 @@ use crate::renderer::{utils::padding_top_from_config, Renderer};
 use crate::selection::{Selection, SelectionType};
 use core::fmt::Debug;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
+use std::error::Error;
+use std::ffi::OsStr;
 use tap_backend::clipboard::Clipboard;
 use tap_backend::clipboard::ClipboardType;
 use tap_backend::config::layout::Margin;
@@ -51,8 +53,6 @@ use tap_window::keyboard::ModifiersKeyState;
 use tap_window::keyboard::{Key, KeyLocation, ModifiersState, NamedKey};
 use tap_window::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use tap_window::window::CursorIcon;
-use std::error::Error;
-use std::ffi::OsStr;
 use touch::TouchPurpose;
 
 /// Maximum number of lines for the blocking search while still typing the search regex.
@@ -529,10 +529,32 @@ impl Screen<'_> {
         false
     }
 
+    /// Latch the pane under the pointer as this press–drag–release
+    /// cycle's selection target. `disable-mouse` has no click-to-focus,
+    /// so a drag in an unfocused pane selects there while keyboard
+    /// focus (input routing, input bar, focus ring) stays put.
+    /// Returns true when a different pane was latched.
+    #[inline]
+    pub fn begin_mouse_selection_cycle(&mut self) -> bool {
+        self.context_manager
+            .current_grid_mut()
+            .mouse_selection_target_begin(&self.mouse)
+    }
+
+    /// Drop the selection target latch: selection ops go back to the
+    /// focused pane. Called on button release and on window focus loss
+    /// (whose release never arrives).
+    #[inline]
+    pub fn end_mouse_selection_cycle(&mut self) {
+        self.context_manager
+            .current_grid_mut()
+            .mouse_selection_target_end();
+    }
+
     #[inline]
     pub fn mouse_position(&self, display_offset: usize) -> Pos {
         let current_grid = self.context_manager.current_grid();
-        let (context, margin) = current_grid.current_context_with_computed_dimension();
+        let (context, margin) = current_grid.mouse_target_with_computed_dimension();
         let context_dimension = context.dimension;
         calculate_mouse_position(
             &self.mouse,
@@ -899,6 +921,18 @@ impl Screen<'_> {
     #[inline]
     pub fn display_offset(&self) -> usize {
         let terminal = self.ctx().current().terminal.lock();
+        let display_offset = terminal.display_offset();
+        drop(terminal);
+        display_offset
+    }
+
+    /// Display offset of the mouse selection target pane (the pane
+    /// latched under the pointer during a press–drag cycle, else the
+    /// focused pane). Mouse-driven selection math must scroll-map
+    /// against the pane it selects in.
+    #[inline]
+    pub fn mouse_selection_display_offset(&self) -> usize {
+        let terminal = self.context_manager.mouse_target().terminal.lock();
         let display_offset = terminal.display_offset();
         drop(terminal);
         display_offset
@@ -2517,7 +2551,7 @@ impl Screen<'_> {
     }
 
     pub fn copy_selection(&mut self, ty: ClipboardType, clipboard: &mut Clipboard) {
-        let terminal = self.context_manager.current_mut().terminal.lock();
+        let terminal = self.context_manager.mouse_target_mut().terminal.lock();
         let text = match terminal.selection_to_string().filter(|s| !s.is_empty()) {
             Some(text) => text,
             None => return,
@@ -2559,10 +2593,10 @@ impl Screen<'_> {
     #[inline]
     pub fn clear_selection(&mut self) {
         // Clear the selection on the terminal.
-        let mut terminal = self.context_manager.current_mut().terminal.lock();
+        let mut terminal = self.context_manager.mouse_target_mut().terminal.lock();
         terminal.selection.take();
         drop(terminal);
-        self.context_manager.current_mut().set_selection(None);
+        self.context_manager.mouse_target_mut().set_selection(None);
     }
 
     #[inline]
@@ -2574,15 +2608,15 @@ impl Screen<'_> {
         clipboard: &mut Clipboard,
     ) {
         self.copy_selection(ClipboardType::Selection, clipboard);
-        let current = self.context_manager.current_mut();
-        let mut terminal = current.terminal.lock();
+        let target = self.context_manager.mouse_target_mut();
+        let mut terminal = target.terminal.lock();
         let selection = Selection::new(ty, point, side);
         let selection_range = selection.to_range(&terminal);
         terminal.selection = Some(selection);
         drop(terminal);
 
         // Use set_selection to trigger render
-        current.set_selection(selection_range);
+        target.set_selection(selection_range);
 
         // Request render to ensure it shows immediately
         self.context_manager.request_render();
@@ -2634,8 +2668,8 @@ impl Screen<'_> {
     #[inline]
     pub fn update_selection(&mut self, mut pos: Pos, side: Side) {
         let is_search_active = self.search_active();
-        let current = self.context_manager.current_mut();
-        let mut terminal = current.terminal.lock();
+        let target = self.context_manager.mouse_target_mut();
+        let mut terminal = target.terminal.lock();
         let mut selection = match terminal.selection.take() {
             Some(selection) => selection,
             None => return,
@@ -2658,7 +2692,7 @@ impl Screen<'_> {
         drop(terminal);
 
         // Use set_selection to trigger render
-        current.set_selection(selection_range);
+        target.set_selection(selection_range);
 
         // Request render to ensure it shows immediately
         self.context_manager.request_render();
@@ -3057,7 +3091,7 @@ impl Screen<'_> {
     /// `mouse_y` is in physical pixels (from CursorMoved position.y).
     pub fn selection_scroll_delta(&self, mouse_y: f64) -> i32 {
         let current_grid = self.context_manager.current_grid();
-        let (context, margin) = current_grid.current_context_with_computed_dimension();
+        let (context, margin) = current_grid.mouse_target_with_computed_dimension();
         let layout = context.dimension;
         // Canonical integer cell stride. line_height is already
         // baked into `cell.cell_height`; the previous code
@@ -3090,12 +3124,12 @@ impl Screen<'_> {
             return;
         }
 
-        let mut terminal = self.context_manager.current_mut().terminal.lock();
+        let mut terminal = self.context_manager.mouse_target_mut().terminal.lock();
         terminal.scroll_display(Scroll::Delta(delta));
         drop(terminal);
 
         // Update selection to match the new scroll position.
-        let display_offset = self.display_offset();
+        let display_offset = self.mouse_selection_display_offset();
         let point = self.mouse_position(display_offset);
         let side = self.mouse.square_side;
         self.update_selection(point, side);
@@ -3122,9 +3156,9 @@ impl Screen<'_> {
     #[inline]
     pub fn side_by_pos(&self, x: f64) -> Side {
         let current_grid = self.context_manager.current_grid();
-        let (_, margin) = current_grid.current_context_with_computed_dimension();
-        let current_context = self.context_manager.current();
-        let layout = current_context.dimension;
+        let (_, margin) = current_grid.mouse_target_with_computed_dimension();
+        let target_context = self.context_manager.mouse_target();
+        let layout = target_context.dimension;
 
         crate::mouse::calculate_side_by_pos(
             x,
@@ -3137,7 +3171,7 @@ impl Screen<'_> {
     #[inline]
     pub fn selection_is_empty(&self) -> bool {
         self.context_manager
-            .current()
+            .mouse_target()
             .renderable_content
             .selection_range
             .is_none()
@@ -3796,7 +3830,7 @@ impl Screen<'_> {
         };
 
         // Move vi mode cursor to mouse click position.
-        let mut terminal = self.context_manager.current_mut().terminal.lock();
+        let mut terminal = self.context_manager.mouse_target_mut().terminal.lock();
         if terminal.mode().contains(Mode::VI) {
             terminal.vi_mode_cursor.pos = point;
         }

@@ -1785,6 +1785,66 @@ mod grid {
         assert_px(width(&grid, a), aw - 40.0);
         assert_px(width(&grid, b), bw + 40.0);
     }
+
+    // The mouse selection target latch addresses the pane under the
+    // pointer for the duration of a press–drag–release cycle without
+    // ever moving the keyboard focus, then falls back to it.
+    #[test]
+    fn a_mouse_selection_target_latches_without_moving_focus() {
+        // A single-pane grid has nothing to latch.
+        let mut single = grid(1.0);
+        let (x, y) = win(&single, 1.0, 1.0);
+        let mouse = Mouse {
+            x: x as f64,
+            y: y as f64,
+            ..Default::default()
+        };
+        assert!(!single.mouse_selection_target_begin(&mouse));
+
+        let mut grid = grid(1.0);
+        let a = grid.current;
+        let b = split(&mut grid, true);
+        split(&mut grid, false); // d, under b
+        let route_a = grid.inner[&a].val.route_id;
+        let route_b = grid.inner[&b].val.route_id;
+
+        grid.current = a;
+
+        // Pointer over the unfocused pane b: latched for selection ops,
+        // keyboard focus stays on a.
+        let (x, y) = win(&grid, rect(&grid, b)[0] + 1.0, rect(&grid, b)[1] + 1.0);
+        let mouse = Mouse {
+            x: x as f64,
+            y: y as f64,
+            ..Default::default()
+        };
+        assert!(grid.mouse_selection_target_begin(&mouse));
+        assert_eq!(grid.current, a, "the keyboard focus did not move");
+        assert_eq!(grid.mouse_target().route_id, route_b);
+        assert_eq!(grid.mouse_target_mut().route_id, route_b);
+
+        // The latched pane's geometry carries its absolute offset, so
+        // window-relative mouse coordinates map into pane b's grid.
+        let (_, margin) = grid.mouse_target_with_computed_dimension();
+        assert_px(margin.left, grid.scaled_margin.left + rect(&grid, b)[0]);
+        assert_px(margin.top, grid.scaled_margin.top + rect(&grid, b)[1]);
+
+        // Ending the cycle drops the latch; ops go back to the focus.
+        grid.mouse_selection_target_end();
+        assert_eq!(grid.mouse_target().route_id, route_a);
+        let (_, margin) = grid.mouse_target_with_computed_dimension();
+        assert_px(margin.left, grid.scaled_margin.left + rect(&grid, a)[0]);
+
+        // Pointer over the focused pane itself latches nothing.
+        let (x, y) = win(&grid, rect(&grid, a)[0] + 1.0, rect(&grid, a)[1] + 1.0);
+        let mouse = Mouse {
+            x: x as f64,
+            y: y as f64,
+            ..Default::default()
+        };
+        assert!(!grid.mouse_selection_target_begin(&mouse));
+        assert_eq!(grid.mouse_target().route_id, route_a);
+    }
 }
 
 // `update_dimensions` with cell metrics from a stand-in for sugarloaf.
