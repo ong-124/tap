@@ -44,6 +44,7 @@ libc = { workspace = true }
 parking_lot = { workspace = true }
 serde = { workspace = true }
 taffy = { version = "0.10.1", features = ["flexbox","grid"] }
+rusqlite = { workspace = true }
 teletypewriter = { workspace = true }
 tap-unicode = { workspace = true }
 url = { workspace = true }

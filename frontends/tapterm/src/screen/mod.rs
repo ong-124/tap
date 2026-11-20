@@ -104,12 +104,14 @@ pub struct Screen<'screen> {
     pub grids: rustc_hash::FxHashMap<usize, tap_backend::sugarloaf::grid::GridRenderer>,
     pub grid_rasterizer: tap_grid::GridGlyphRasterizer,
     /// Submissions still awaiting their OSC 133 `D` outcome, one
-    /// bounded queue per pane route: `(submit ts, line)`. Drained by
-    /// [`Screen::note_command_finished`] via
+    /// bounded queue per pane route: `(submit ts, usages row id)`.
+    /// Drained by [`Screen::note_command_finished`] via
     /// `input_history::exit_target`; shells without integration never
     /// emit `D`, so the cap keeps their queues flat.
-    exit_pending:
-        std::collections::HashMap<usize, std::collections::VecDeque<(u64, String)>>,
+    exit_pending: std::collections::HashMap<
+        usize,
+        std::collections::VecDeque<crate::input_history::ExitCandidate>,
+    >,
     /// Input broadcast toggle (`<leader>`+S): while on, submitted
     /// lines fan out to every available pane of the current tab. The
     /// input bar mirrors it for its `>>` prompt marker.
@@ -251,12 +253,10 @@ impl Screen<'_> {
         );
         // Seed the bar's browsable history from the persistent store
         // (once per window; submissions append to the store directly).
+        let snapshot = crate::input_history::load();
         renderer
             .input_bar
-            .set_history_entries(crate::input_history::load_entries(
-                &crate::input_history::store_path(),
-                crate::input_history::MAX_ENTRIES,
-            ));
+            .set_history_entries(snapshot.entries, snapshot.frequent);
         let padding_y_bottom = config.margin.bottom + renderer.input_bar.height();
 
         let bindings = crate::bindings::default_key_bindings(config);
@@ -1337,10 +1337,12 @@ impl Screen<'_> {
         let session_remote_cwd = osc7_cwd.map(|p| p.to_string_lossy().into_owned());
 
         // Refresh the focus snapshot while the pane's directory is
-        // already being probed (the ghost ranks same-cwd history first).
+        // already being probed (it scopes the ghost and ↑ browsing).
+        let (focus_host, focus_cwd) =
+            self.history_scope_with(ssh_session_host.as_deref());
         self.renderer
             .input_bar
-            .set_focus_cwd(cwd.as_ref().map(|p| p.to_string_lossy().into_owned()));
+            .set_focus_scope(Some(focus_host), Some(focus_cwd));
         let mut sources = crate::completion::Sources::from_env(cwd);
         sources.session_ssh_host = ssh_session_host;
         sources.session_remote_cwd = session_remote_cwd;
@@ -1363,6 +1365,36 @@ impl Screen<'_> {
     #[cfg(target_os = "windows")]
     fn foreground_ssh_host(&self) -> Option<String> {
         None
+    }
+
+    /// The history scope of the focused pane: `''` host locally, the
+    /// `ssh -G`-canonicalized destination inside a session. Locally the
+    /// cwd is the OSC 7 value with the foreground-process probe as the
+    /// fallback; inside ssh only the remote shell's OSC 7 counts (the
+    /// probe lands on the local ssh client), so a remote without
+    /// integration scopes by host alone (empty cwd).
+    fn history_scope(&self) -> (String, String) {
+        self.history_scope_with(self.foreground_ssh_host().as_deref())
+    }
+
+    fn history_scope_with(&self, ssh_dest: Option<&str>) -> (String, String) {
+        match ssh_dest {
+            Some(dest) => {
+                let host = crate::completion::normalize_ssh_host(dest);
+                let cwd = self
+                    .pane_osc7_cwd()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                (host, cwd)
+            }
+            None => {
+                let cwd = self
+                    .focused_pane_cwd()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                (String::new(), cwd)
+            }
+        }
     }
 
     /// The focused pane's shell-reported (OSC 7) directory: `None`
@@ -1405,16 +1437,7 @@ impl Screen<'_> {
     /// the close check, so a pane that just exited never records an
     /// unsent line — and is queued for the OSC 133 `D` exit backfill.
     fn submit_input_bar_line(&mut self) {
-        // Inside an ssh session only the shell-reported OSC 7 value
-        // counts as the cwd (the probe would land on the local ssh
-        // client); a stale report `cd`s nowhere on the remote and is
-        // harmless — the history entry just carries no directory.
-        let cwd = if self.foreground_ssh_host().is_some() {
-            self.pane_osc7_cwd()
-        } else {
-            self.focused_pane_cwd()
-        }
-        .unwrap_or_default();
+        let (host, cwd) = self.history_scope();
         let route_id = self.context_manager.current_route();
 
         // Masked lines are secrets: `take_submitted_line` already kept
@@ -1429,32 +1452,25 @@ impl Screen<'_> {
         if self.context_manager.close_if_exited() {
             return;
         }
+        // Stamp the run scope on the newest entry (folding any earlier
+        // same-scope twin into it, mirroring the store's upsert) and
+        // refresh the focus snapshot: a `cd` lands here before the
+        // next prompt.
+        self.renderer.input_bar.set_last_history_scope(&host, &cwd);
+        self.renderer
+            .input_bar
+            .set_focus_scope(Some(host.clone()), Some(cwd.clone()));
         if should_record && self.renderer.input_bar.records_history_line(&line) {
             let ts = crate::input_history::now_ts();
-            // Stamp the run directory on the newest entry so the ghost
-            // suggestion can rank same-cwd history first, and refresh
-            // the focus snapshot: a `cd` lands here before the next
-            // prompt.
-            self.renderer
-                .input_bar
-                .set_last_history_cwd(&cwd.to_string_lossy());
-            self.renderer
-                .input_bar
-                .set_focus_cwd(Some(cwd.to_string_lossy().into_owned()));
-            crate::input_history::append(
-                &crate::input_history::store_path(),
-                &crate::input_history::Entry {
+            // The returned usages row id is the exact anchor the OSC
+            // 133 `D` exit backfills — no timestamp matching.
+            if let Some(usage_id) = crate::input_history::record(&host, &cwd, &line, ts) {
+                crate::input_history::push_exit_candidate(
+                    self.exit_pending.entry(route_id).or_default(),
                     ts,
-                    cwd: cwd.to_string_lossy().into_owned(),
-                    line: line.clone(),
-                    exit: None,
-                },
-            );
-            crate::input_history::push_exit_candidate(
-                self.exit_pending.entry(route_id).or_default(),
-                ts,
-                &line,
-            );
+                    usage_id,
+                );
+            }
         }
 
         self.scroll_bottom_when_cursor_not_visible();
@@ -1506,17 +1522,11 @@ impl Screen<'_> {
         };
         let started_at =
             crate::input_history::now_ts().saturating_sub(duration.as_secs());
-        let Some((ts, line)) = crate::input_history::exit_target(queue, started_at)
-        else {
+        let Some(usage_id) = crate::input_history::exit_target(queue, started_at) else {
             return;
         };
         if let Some(exit) = exit_status {
-            crate::input_history::backfill_exit(
-                &crate::input_history::store_path(),
-                ts,
-                &line,
-                exit,
-            );
+            crate::input_history::backfill_exit(usage_id, exit);
         }
     }
 

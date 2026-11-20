@@ -1031,6 +1031,54 @@ pub fn warm_ssh_side_channel(host: &str) {
     });
 }
 
+/// The canonical host a destination resolves to (`ssh -G`), so an
+/// alias, a hostname and an IP for the same box share one history
+/// scope. Resolved once per destination and cached; anything that
+/// keeps ssh from answering (missing binary, refusing config, odd
+/// dest token) falls back to the destination verbatim, which merely
+/// keeps the pre-normalization scoping.
+pub fn normalize_ssh_host(dest: &str) -> String {
+    static CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache.lock().expect("ssh host cache poisoned");
+    if let Some(host) = cache.get(dest) {
+        return host.clone();
+    }
+    let resolved = ssh_g_hostname(dest).unwrap_or_else(|| dest.to_string());
+    cache.insert(dest.to_string(), resolved.clone());
+    resolved
+}
+
+fn ssh_g_hostname(dest: &str) -> Option<String> {
+    let output = std::process::Command::new("ssh")
+        .arg("-G")
+        .arg(dest)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_ssh_g_hostname(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// The `hostname <value>` line of `ssh -G` output (keyword matching is
+/// case-insensitive; OpenSSH prints lowercase).
+fn parse_ssh_g_hostname(stdout: &str) -> Option<String> {
+    for line in stdout.lines() {
+        let mut parts = line.splitn(2, ' ');
+        if parts
+            .next()
+            .is_some_and(|key| key.eq_ignore_ascii_case("hostname"))
+        {
+            let value = parts.next()?.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Parse `__complete` output: candidate lines (a `\t` description is
 /// stripped) and the trailing `:<bits>` directive. Directive bits we
 /// honour: `2` no space after a single match, `16` candidates are
@@ -1953,5 +2001,25 @@ mod tests {
         assert_eq!(interactive_ssh_dest("ssh web-1 uname -a"), None);
         assert_eq!(interactive_ssh_dest("ssh"), None);
         assert_eq!(interactive_ssh_dest("vim notes"), None);
+    }
+
+    #[test]
+    fn ssh_g_output_yields_the_canonical_hostname() {
+        let output = concat!(
+            "user foo\n",
+            "port 22\n",
+            "hostname 192.168.1.10\n",
+            "user known\n",
+        );
+        assert_eq!(parse_ssh_g_hostname(output), Some("192.168.1.10".into()));
+
+        // Case-insensitive keyword, whitespace tolerance.
+        assert_eq!(
+            parse_ssh_g_hostname("HOSTNAME   box.corp\n"),
+            Some("box.corp".into())
+        );
+        assert_eq!(parse_ssh_g_hostname("port 22\nuser root\n"), None);
+        assert_eq!(parse_ssh_g_hostname("hostname\n"), None, "no value");
+        assert_eq!(parse_ssh_g_hostname(""), None);
     }
 }

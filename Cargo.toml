@@ -80,6 +80,7 @@ url = "2.5.4"
 criterion = { version = "0.6.0", features = ["html_reports"] }
 dashmap = "6.2.1"
 flate2 = "1.1.9"
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [profile.release]
 strip = "symbols"           # See split-debuginfo - allows us to drop the size by ~65%

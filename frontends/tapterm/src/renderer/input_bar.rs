@@ -43,9 +43,6 @@ const CANDIDATE_GAP: f32 = 14.0;
 pub const CARET_BLINK_MS: u128 = 500;
 const PREEDIT_UNDERLINE_HEIGHT: f32 = 2.0;
 
-/// Kept in memory only, mirroring the search history limit.
-pub const MAX_HISTORY: usize = 255;
-
 /// How long a dynamic completion answer stays trusted. Cycling
 /// candidates or re-Tabbing within the window never re-queries; past
 /// it the next Tab asks the tool again (pods come and go).
@@ -98,8 +95,11 @@ pub struct InputBar {
     cursor: usize,
     /// First visible char when the line overflows the bar.
     view_start: usize,
-    history: Vec<String>,
-    /// History slot being previewed, `None` for the live line.
+    /// Every known scope×command pair, oldest use first — the store
+    /// snapshot plus in-session submits appended at the tail.
+    history: Vec<crate::input_history::Entry>,
+    /// History slot being previewed, an index into `browse`; `None`
+    /// for the live line.
     history_pos: Option<usize>,
     /// The live line, stashed while previewing history.
     draft: String,
@@ -112,18 +112,27 @@ pub struct InputBar {
     masked: bool,
     preedit: Option<String>,
     /// Ghost suggestion (zsh-autosuggestions style): the suffix of the
-    /// most recent history entry matching the buffer as a prefix,
-    /// rendered dim after the caret and accepted with → / End.
+    /// first history entry matching the buffer as a prefix in `browse`
+    /// order, rendered dim after the caret and accepted with → / End.
     suggestion: Option<String>,
     /// The full history entry the ghost came from, so an edit that
     /// still extends toward it just trims the tail instead of
     /// rescanning (Warp editor/view/mod.rs:7725-7774).
     suggestion_line: Option<String>,
-    /// Per-entry cwd parallel to `history` (empty = unknown), used to
-    /// rank same-directory history first for the ghost suggestion.
-    history_cwds: Vec<String>,
-    /// cwd of the focused pane, snapshotted by the screen layer on
-    /// submit / Tab; `None` until then (cwd-agnostic ranking).
+    /// Global frequency pool (uses desc) for the strict two-state
+    /// fallback: when the focused scope has no history, ↑ browsing and
+    /// the ghost turn to the user's most-used commands instead.
+    frequent: Vec<String>,
+    /// The ↑-walk order, materialized: the focused scope's own
+    /// commands (newest use first) when it has any, the frequency pool
+    /// otherwise; before any focus snapshot, the whole history
+    /// (newest first) as before. Rebuilt on scope or history changes.
+    browse: Vec<String>,
+    /// Host half of the focused pane's scope, snapshotted by the
+    /// screen layer on submit / Tab (`None` until then: no scoping).
+    /// Empty string = local.
+    focus_host: Option<String>,
+    /// cwd half of the scope, snapshotted alongside the host.
     focus_cwd: Option<String>,
     /// Live Tab-completion cycle state; kept only while the word under
     /// the cursor is still the one this state last produced.
@@ -200,7 +209,9 @@ impl Default for InputBar {
             preedit: None,
             suggestion: None,
             suggestion_line: None,
-            history_cwds: Vec::new(),
+            frequent: Vec::new(),
+            browse: Vec::new(),
+            focus_host: None,
             focus_cwd: None,
             completion: None,
             dynamic: true,
@@ -379,46 +390,92 @@ impl InputBar {
     }
 
     /// Replace the browsable history (startup load of the persistent
-    /// store). Any in-flight browse resets to the live line. The
-    /// per-entry cwd the store recorded rides along: the ghost
-    /// suggestion prefers entries from the focused pane's directory
-    /// (Warp next_command_model.rs:839-864).
-    pub fn set_history_entries(&mut self, entries: Vec<crate::input_history::Entry>) {
-        self.history_cwds = entries.iter().map(|e| e.cwd.clone()).collect();
-        self.reset_history(entries.into_iter().map(|e| e.line).collect());
-    }
-
-    fn reset_history(&mut self, history: Vec<String>) {
-        self.history = history;
+    /// store): the scope×command pairs plus the global frequency pool.
+    /// Any in-flight browse resets to the live line.
+    pub fn set_history_entries(
+        &mut self,
+        entries: Vec<crate::input_history::Entry>,
+        frequent: Vec<String>,
+    ) {
+        self.history = entries;
+        self.frequent = frequent;
         self.history_pos = None;
         self.draft.clear();
         self.draft_masked = false;
         self.masked = false;
         self.suggestion_line = None;
         self.invalidate_completion();
+        self.rebuild_browse();
         self.refresh_suggestion();
     }
 
-    /// Snapshot the focused pane's cwd (screen layer refreshes it on
+    /// Snapshot the focused pane's scope (screen layer refreshes it on
     /// submit and Tab, both points where the pane's directory is
-    /// already being probed).
-    pub fn set_focus_cwd(&mut self, cwd: Option<String>) {
-        if self.focus_cwd != cwd {
+    /// already being probed). Drives the strict two-state browse: the
+    /// scope's own commands once it has any, the frequency pool
+    /// otherwise.
+    pub fn set_focus_scope(&mut self, host: Option<String>, cwd: Option<String>) {
+        if self.focus_host != host || self.focus_cwd != cwd {
+            self.focus_host = host;
             self.focus_cwd = cwd;
             // Ranking context changed: drop the trim shortcut so the
-            // scan re-ranks against the new directory.
+            // scan re-ranks against the new scope.
             self.suggestion_line = None;
+            self.rebuild_browse();
             self.refresh_suggestion();
         }
     }
 
-    /// Stamp the cwd a just-submitted line ran in onto the newest
-    /// history entry (the push itself doesn't know it). Called by the
-    /// screen layer right after `take_submitted_line`.
-    pub fn set_last_history_cwd(&mut self, cwd: &str) {
-        if let Some(last) = self.history_cwds.last_mut() {
-            *last = cwd.to_string();
+    /// Stamp the scope a just-submitted line ran in onto the newest
+    /// history entry (the push itself doesn't know it) and fold it
+    /// into any earlier same-scope occurrence — the store upserts the
+    /// pair; memory mirrors that by keeping only the tail copy, so ↑
+    /// walks newest-first without duplicates. Called by the screen
+    /// layer right after `take_submitted_line`.
+    pub fn set_last_history_scope(&mut self, host: &str, cwd: &str) {
+        let Some(last) = self.history.last_mut() else {
+            return;
+        };
+        last.host = host.to_string();
+        last.cwd = cwd.to_string();
+        let line = last.line.clone();
+        let head = self.history.len().saturating_sub(1);
+        let twin = self.history[..head].iter().position(|entry| {
+            entry.host == host && entry.cwd == cwd && entry.line == line
+        });
+        if let Some(pos) = twin {
+            self.history.remove(pos);
         }
+        self.rebuild_browse();
+    }
+
+    /// The ↑-walk order: the focused scope's own commands, newest use
+    /// first (`history` is use-ascending, so the scope's slice reads
+    /// backwards); when the scope has none yet, the frequency pool;
+    /// before any focus snapshot, the whole history newest first.
+    fn rebuild_browse(&mut self) {
+        let scoped = match (&self.focus_host, &self.focus_cwd) {
+            (Some(host), Some(cwd)) => self
+                .history
+                .iter()
+                .filter(|entry| &entry.host == host && &entry.cwd == cwd)
+                .map(|entry| entry.line.clone())
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        self.browse = if scoped.is_empty() {
+            if self.focus_host.is_some() && self.focus_cwd.is_some() {
+                self.frequent.clone()
+            } else {
+                self.history
+                    .iter()
+                    .rev()
+                    .map(|entry| entry.line.clone())
+                    .collect()
+            }
+        } else {
+            scoped.into_iter().rev().collect()
+        };
     }
 
     /// `[input-bar] record-history` / `suggestions` / `dynamic-completion`
@@ -451,11 +508,11 @@ impl InputBar {
     }
 
     /// Whether the last submit actually entered the history list
-    /// (adjacent dedup may have skipped it); the caller uses this to
-    /// keep the persistent store in lockstep.
+    /// (the adjacent-dup gate may have skipped it); the caller uses
+    /// this to keep the persistent store in lockstep.
     #[inline]
     pub fn last_history_is(&self, line: &str) -> bool {
-        self.history.last().map(String::as_str) == Some(line)
+        self.history.last().map(|entry| entry.line.as_str()) == Some(line)
     }
 
     /// Whether a submitted line belongs in history: non-blank and
@@ -502,35 +559,18 @@ impl InputBar {
             }
         }
 
-        // Fresh scan, newest → oldest, same-cwd bucket first. Entries
-        // without cwd metadata (plain `set_history`, in-session pushes
-        // before the screen stamps them) never claim the priority.
+        // Fresh scan over the same two-state list the arrows walk: the
+        // focused scope's own commands only, or the frequency pool when
+        // the scope has none — another directory's history never leaks
+        // into the ghost.
         let buffer = self.buffer.clone();
-        let same_cwd = |i: usize| {
-            self.focus_cwd
-                .as_deref()
-                .filter(|focus| !focus.is_empty())
-                .zip(self.history_cwds.get(i).map(String::as_str))
-                .is_some_and(|(focus, cwd)| focus == cwd && !cwd.is_empty())
-        };
-        let mut primary: Option<usize> = None;
-        let mut fallback: Option<usize> = None;
-        for i in (0..self.history.len()).rev() {
-            let entry = &self.history[i];
-            if entry == &buffer || !entry.starts_with(buffer.as_str()) {
-                continue;
-            }
-            if primary.is_none() && same_cwd(i) {
-                primary = Some(i);
-                break;
-            }
-            if fallback.is_none() {
-                fallback = Some(i);
-            }
-        }
-        match primary.or(fallback) {
-            Some(i) => {
-                let entry = self.history[i].clone();
+        let matched = self
+            .browse
+            .iter()
+            .find(|line| line.starts_with(buffer.as_str()) && **line != buffer)
+            .cloned();
+        match matched {
+            Some(entry) => {
                 self.suggestion = Some(entry[self.buffer.len()..].to_string());
                 self.suggestion_line = Some(entry);
             }
@@ -1062,17 +1102,20 @@ impl InputBar {
     }
 
     pub fn history_previous(&mut self) {
-        if self.history.is_empty() {
+        if self.browse.is_empty() {
             return;
         }
+        // `browse` is ↑-walk order: index 0 is what the first ↑ shows
+        // (the newest use in scope, or the most-used command of the
+        // frequency fallback), walking up sinks toward the tail.
         self.history_pos = match self.history_pos {
             None => {
                 self.draft = self.buffer.clone();
                 self.draft_masked = self.masked;
-                Some(self.history.len() - 1)
+                Some(0)
             }
-            Some(0) => return,
-            Some(pos) => Some(pos - 1),
+            Some(pos) if pos + 1 >= self.browse.len() => return,
+            Some(pos) => Some(pos + 1),
         };
         self.load_at(self.history_pos.unwrap());
     }
@@ -1082,9 +1125,9 @@ impl InputBar {
             None => return,
             Some(pos) => pos,
         };
-        if pos + 1 < self.history.len() {
-            self.history_pos = Some(pos + 1);
-            self.load_at(pos + 1);
+        if pos > 0 {
+            self.history_pos = Some(pos - 1);
+            self.load_at(pos - 1);
         } else {
             self.history_pos = None;
             self.buffer = self.draft.clone();
@@ -1098,7 +1141,7 @@ impl InputBar {
     }
 
     fn load_at(&mut self, pos: usize) {
-        self.buffer = self.history[pos].clone();
+        self.buffer = self.browse[pos].clone();
         self.cursor = self.char_count();
         self.view_start = 0;
         // History entries are public record: never masked.
@@ -1116,17 +1159,22 @@ impl InputBar {
     pub fn take_submitted_line(&mut self) -> String {
         let line = self.buffer.clone();
         let secret = self.masked;
-        if !secret
-            && self.records_history_line(&line)
-            && self.history.last() != Some(&line)
-        {
-            self.history.push(line.clone());
-            // cwd unknown here; the screen layer stamps it right after.
-            self.history_cwds.push(String::new());
-            if self.history.len() > MAX_HISTORY {
+        let is_adjacent_dup = self.history.last().is_some_and(|entry| entry.line == line);
+        if !secret && self.records_history_line(&line) && !is_adjacent_dup {
+            // Scope unknown here; the screen layer stamps it right
+            // after (folding any earlier same-scope twin into this
+            // fresh tail copy, mirroring the store's upsert).
+            self.history.push(crate::input_history::Entry {
+                ts: crate::input_history::now_ts(),
+                host: String::new(),
+                cwd: String::new(),
+                line: line.clone(),
+                exit: None,
+            });
+            if self.history.len() > crate::input_history::MAX_ENTRIES {
                 self.history.remove(0);
-                self.history_cwds.remove(0);
             }
+            self.rebuild_browse();
         }
         self.buffer.clear();
         self.cursor = 0;
@@ -1553,16 +1601,17 @@ mod tests {
 
     #[test]
     fn history_is_capped() {
+        let cap = crate::input_history::MAX_ENTRIES;
         let mut bar = InputBar::new(true);
-        for i in 0..(MAX_HISTORY + 20) {
+        for i in 0..(cap + 20) {
             bar.insert_text(&format!("cmd-{i}"));
             bar.take_submitted_line();
         }
-        assert_eq!(bar.history.len(), MAX_HISTORY);
-        assert_eq!(bar.history.first().unwrap(), "cmd-20");
+        assert_eq!(bar.history.len(), cap);
+        assert_eq!(bar.history.first().unwrap().line, "cmd-20");
         assert_eq!(
-            bar.history.last().unwrap(),
-            &format!("cmd-{}", MAX_HISTORY + 19)
+            bar.history.last().unwrap().line,
+            format!("cmd-{}", cap + 19)
         );
     }
 
@@ -1654,18 +1703,26 @@ mod tests {
 
     fn bar_with_history(entries: &[&str]) -> InputBar {
         let mut bar = InputBar::new(true);
-        bar.set_history_entries(
-            entries
-                .iter()
-                .map(|line| crate::input_history::Entry {
-                    ts: 0,
-                    cwd: String::new(),
-                    line: line.to_string(),
-                    exit: None,
-                })
-                .collect(),
-        );
+        bar.set_history_entries(scoped_entries("", "", entries), Vec::new());
         bar
+    }
+
+    fn scoped_entries(
+        host: &str,
+        cwd: &str,
+        lines: &[&str],
+    ) -> Vec<crate::input_history::Entry> {
+        lines
+            .iter()
+            .enumerate()
+            .map(|(i, line)| crate::input_history::Entry {
+                ts: i as u64,
+                host: host.to_string(),
+                cwd: cwd.to_string(),
+                line: line.to_string(),
+                exit: None,
+            })
+            .collect()
     }
 
     #[test]
@@ -1733,31 +1790,99 @@ mod tests {
     }
 
     #[test]
-    fn suggestion_prefers_the_focus_cwd_bucket() {
-        let entry = |ts: u64, cwd: &str, line: &str| crate::input_history::Entry {
-            ts,
-            cwd: cwd.to_string(),
-            line: line.to_string(),
-            exit: None,
-        };
+    fn ghost_is_strictly_scoped_with_frequency_fallback() {
         let mut bar = InputBar::new(true);
-        bar.set_history_entries(vec![
-            entry(1, "/proj", "make build"),
-            entry(2, "/other", "make test"),
-        ]);
+        bar.set_history_entries(
+            scoped_entries("", "/proj", &["make build", "make test"]),
+            vec![
+                "kubectl get pods".to_string(),
+                "docker ps".to_string(),
+                "make test".to_string(),
+            ],
+        );
 
-        // No focus snapshot yet: most recent match wins.
+        // No focus snapshot yet: the whole history, newest first.
         bar.insert_text("make");
         assert_eq!(bar.suggestion.as_deref(), Some(" test"));
 
-        // Focused on /proj: the older same-directory entry outranks the
-        // newer foreign one.
-        bar.set_focus_cwd(Some("/proj".to_string()));
-        assert_eq!(bar.suggestion.as_deref(), Some(" build"));
+        // Focused on /proj: only the scope's own commands, newest use
+        // first — the pool never blends in while the scope has any.
+        bar.set_focus_scope(Some(String::new()), Some("/proj".to_string()));
+        bar.clear();
+        bar.insert_text("make ");
+        assert_eq!(bar.suggestion.as_deref(), Some("test"));
+        bar.insert_text("build");
+        assert_eq!(bar.suggestion, None, "exact match shows nothing");
 
-        // Entries without cwd metadata never claim the priority.
-        bar.set_focus_cwd(None);
+        // A scope with no history falls back to the frequency pool.
+        bar.set_focus_scope(Some("web-1".into()), Some("/srv".into()));
+        bar.clear();
+        bar.insert_text("kubectl");
+        assert_eq!(
+            bar.suggestion.as_deref(),
+            Some(" get pods"),
+            "most-used command leads the fallback"
+        );
+        bar.insert_text(" ge");
+        assert_eq!(
+            bar.suggestion.as_deref(),
+            Some("t pods"),
+            "typing toward the line keeps trimming the ghost"
+        );
+        bar.insert_text(" xyz");
+        assert_eq!(bar.suggestion, None, "prefix miss ends the ghost");
+
+        // Clearing the snapshot returns to the unscoped history.
+        bar.set_focus_scope(None, None);
+        bar.clear();
+        bar.insert_text("make");
         assert_eq!(bar.suggestion.as_deref(), Some(" test"));
+    }
+
+    #[test]
+    fn browse_is_strictly_two_state_per_scope() {
+        let mut bar = InputBar::new(true);
+        bar.set_history_entries(
+            scoped_entries("", "/proj", &["proj-a", "proj-b"]),
+            vec!["hot-cmd".to_string()],
+        );
+
+        // Scope has history: ↑ walks the scope only, then stops.
+        bar.set_focus_scope(Some(String::new()), Some("/proj".to_string()));
+        bar.history_previous();
+        assert_eq!(bar.buffer, "proj-b", "newest use first");
+        bar.history_previous();
+        assert_eq!(bar.buffer, "proj-a");
+        bar.history_previous();
+        assert_eq!(bar.buffer, "proj-a", "clamped at the list end");
+        bar.history_next();
+        bar.history_next();
+        assert_eq!(bar.buffer, "", "back to the live line");
+
+        // Empty scope: the frequency pool replaces it.
+        bar.set_focus_scope(Some(String::new()), Some("/fresh".to_string()));
+        bar.history_previous();
+        assert_eq!(bar.buffer, "hot-cmd");
+        bar.history_previous();
+        assert_eq!(bar.buffer, "hot-cmd", "pool exhausted, clamped");
+    }
+
+    #[test]
+    fn resubmit_folds_the_same_scope_twin_to_the_tail() {
+        let mut bar = InputBar::new(true);
+        bar.set_history_entries(scoped_entries("", "/proj", &["make", "ls"]), Vec::new());
+        bar.set_focus_scope(Some(String::new()), Some("/proj".to_string()));
+
+        // Re-run `make` in /proj: the store upserts, memory moves the
+        // tail copy — ↑ must see `make` exactly once, as the newest.
+        bar.insert_text("make");
+        let _ = bar.take_submitted_line();
+        bar.set_last_history_scope("", "/proj");
+        assert_eq!(bar.history.len(), 2, "no duplicate pair in memory");
+        bar.history_previous();
+        assert_eq!(bar.buffer, "make", "the fresh run is the newest");
+        bar.history_previous();
+        assert_eq!(bar.buffer, "ls");
     }
 
     #[test]
@@ -1804,9 +1929,9 @@ mod tests {
         let mut bar = bar_with_history(&["ls"]);
         bar.insert_text("make");
         bar.take_submitted_line();
-        bar.set_last_history_cwd("/proj");
+        bar.set_last_history_scope("", "/proj");
 
-        bar.set_focus_cwd(Some("/proj".to_string()));
+        bar.set_focus_scope(Some(String::new()), Some("/proj".to_string()));
         bar.insert_text("ma");
         assert_eq!(
             bar.suggestion.as_deref(),
@@ -2212,7 +2337,7 @@ mod tests {
         assert_eq!(line, "hunter2");
         assert!(!bar.is_masked(), "submit resets the mask");
         assert_eq!(
-            bar.history.last().map(String::as_str),
+            bar.history.last().map(|entry| entry.line.as_str()),
             Some("ls -la"),
             "the secret never enters memory history"
         );

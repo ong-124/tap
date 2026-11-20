@@ -122,3 +122,9 @@
   - 梯度二：脚本内 /proc 探测（comm∈shell 表、fd/0 指 pts、starttime 最新取 cwd；`${20}` 偏移修正设计笔误 + 非数字防御），cd 后跑现有 compgen 管道
   - 梯度三：远程 home 兜底不变；顺带修正 ssh 会话内 sources.cwd 错位（foreground_ssh_host/pane_osc7_cwd 两 helper，tab 与 submit 共用，ghost/提交元数据 OSC 7-only）
   - 验证：tapterm 382（+1）测试通过，clippy/fmt 干净；probe/anchor 脚本本地实测通过（pts 上 zsh 命中 56ms、anchor cd 生效、无效 anchor 回落）；v2 端口精确匹配（ss + SSH_CONNECTION）仍为演进方向；待用户手测（ssh 后 cd /var/log 裸词 Tab 列该目录）
+- [x] 【已完成】输入历史 SQLite 三表重构（[详情](task/20261120-1922_输入历史SQLite三表重构.md)）
+  - 三表模型（用户设计）：`dirs(host,cwd)` / `commands(line,uses,ts)` / `usages(dir_id,command_id,ts,uses,exit)` 各自防重，rusqlite 0.32 bundled，WAL + busy_timeout，进程级共享连接，损坏库自愈重建
+  - 作用域语义：本地 `(cwd, line)`、ssh `(host, cwd, line)`，host 经 `ssh -G` 归一化（按 dest 内存缓存，失败退原样）；远端无 OSC 7 退化按主机聚合
+  - 回显严格两态：作用域有历史只走该作用域（ts 降序），无历史走全局频次兜底（uses 降序，上限 255）；↑ 浏览与 ghost 共用 browse 列表；会话内同作用域全局去重移尾
+  - exit 回填按 `usages.id` 精确 UPDATE（替换 (ts,line) 匹配）；trim 启动时单事务删老 usages + 清孤儿 dirs，commands.uses 终身保留；旧 TSV 忽略不迁移不删除
+  - 验证：tapterm 383（+13）测试通过，clippy 0 告警，触碰文件 fmt 干净，workspace check 通过；待用户手测（分目录 ↑ 隔离回显、重跑沉顶、ssh 远端目录/主机聚合与 alias 合流、密文不入库、多窗口并发）
