@@ -84,6 +84,31 @@ fn is_path_word(word: &str) -> bool {
     word.contains('/') || word.starts_with('~') || word.starts_with('.')
 }
 
+/// Commands whose only argument is a directory (bash/zsh semantics:
+/// `cd <Tab>` offers directories, never files).
+const DIR_ONLY_COMMANDS: [&str; 3] = ["cd", "pushd", "rmdir"];
+
+/// Whether the word being completed is the argument of a
+/// directory-only command. The last positional word before the cursor
+/// is the command when only flags sit between them, so `cd -P <Tab>`
+/// counts while `cd a b<Tab>` does not.
+pub fn is_dirs_only_context(argv: &[String]) -> bool {
+    argv.iter()
+        .rev()
+        .find(|tok| !tok.starts_with('-'))
+        .is_some_and(|cmd| DIR_ONLY_COMMANDS.contains(&cmd.as_str()))
+}
+
+/// Keep only directories when the word is the argument of a
+/// directory-only command; otherwise pass the candidates through.
+pub fn filter_dirs_only(candidates: Vec<Candidate>, argv: &[String]) -> Vec<Candidate> {
+    if is_dirs_only_context(argv) {
+        candidates.into_iter().filter(|c| c.is_dir).collect()
+    } else {
+        candidates
+    }
+}
+
 /// Candidates for a word. Dispatches on first-word-ness.
 pub fn gather(word_start_char: usize, word: &str, sources: &Sources) -> Vec<Candidate> {
     if is_command_word(word_start_char, word) {
@@ -548,6 +573,7 @@ pub fn route(
                     host: ssh.dest,
                     word: word.to_string(),
                     anchor: None,
+                    dirs_only: is_dirs_only_context(remote_argv),
                 }),
             };
         }
@@ -557,15 +583,18 @@ pub fn route(
     // path-shaped first word lists remote files, any other first word
     // lists remote command names; later words query a Cobra tool
     // remotely or fall through to remote path completion. The
-    // session's shell-reported cwd anchors path completion.
+    // session's shell-reported cwd anchors path completion, and a
+    // directory-only command's argument lists directories alone.
     if let Some(host) = session_ssh_host {
         let anchor = remote_cwd.map(str::to_string);
+        let dirs_only = is_dirs_only_context(argv);
         if argv.is_empty() {
             return Route::Dynamic(if is_path_word(word) {
                 DynamicRequest::RemotePaths {
                     host: host.to_string(),
                     word: word.to_string(),
                     anchor,
+                    dirs_only,
                 }
             } else {
                 DynamicRequest::RemoteCommands {
@@ -585,6 +614,7 @@ pub fn route(
                 host: host.to_string(),
                 word: word.to_string(),
                 anchor,
+                dirs_only,
             }),
         };
     }
@@ -634,6 +664,9 @@ pub enum DynamicRequest {
         /// script probe the interactive shell's cwd over `/proc` and
         /// fall back to the remote home.
         anchor: Option<String>,
+        /// The word is a directory-only command's argument (`cd <Tab>`):
+        /// the script switches `compgen` to `-A directory`.
+        dirs_only: bool,
     },
 }
 
@@ -666,11 +699,19 @@ impl DynamicRequest {
             DynamicRequest::RemoteCommands { host, word } => {
                 format!("r\u{1}{host}\u{1}{word}")
             }
-            DynamicRequest::RemotePaths { host, word, anchor } => {
+            DynamicRequest::RemotePaths {
+                host,
+                word,
+                anchor,
+                dirs_only,
+            } => {
                 let mut key = format!("p\u{1}{host}\u{1}{word}");
                 if let Some(anchor) = anchor {
                     key.push('\u{1}');
                     key.push_str(anchor);
+                }
+                if *dirs_only {
+                    key.push('d');
                 }
                 key
             }
@@ -880,7 +921,12 @@ fn build_command(request: &DynamicRequest) -> Option<std::process::Command> {
             );
             Some(ssh_command(host, &script))
         }
-        DynamicRequest::RemotePaths { host, word, anchor } => {
+        DynamicRequest::RemotePaths {
+            host,
+            word,
+            anchor,
+            dirs_only,
+        } => {
             // File candidates over the side channel. The channel lands
             // in the remote home, and the interactive shell's cwd is
             // invisible to it — the word carries its own anchor when it
@@ -892,9 +938,14 @@ fn build_command(request: &DynamicRequest) -> Option<std::process::Command> {
             // against the remote $HOME and complete back as `~`.
             // Hidden entries only surface once the word starts with a
             // dot, directories carry a trailing `/`, the wire is capped
-            // at MAX_CANDIDATES rows.
-            let script = r#"bash -c 'probe() { best=""; bs=-1; for d in /proc/[0-9]*; do read -r c < "$d/comm" 2>/dev/null || continue; case $c in bash|zsh|fish|nu|ksh|tcsh|dash|mksh) ;; *) continue ;; esac; case "$(readlink "$d/fd/0" 2>/dev/null)" in /dev/pts/*|/dev/tty[0-9]*) ;; *) continue ;; esac; cwd=$(readlink "$d/cwd" 2>/dev/null) || continue; [ -n "$cwd" ] || continue; raw=$(cat "$d/stat" 2>/dev/null) || continue; raw=${raw#*) }; set -- $raw; st=${20}; case $st in ""|*[!0-9]*) continue ;; esac; [ "$st" -gt "$bs" ] && { bs=$st; best=$cwd; }; done; printf "%s" "$best"; }; a=$2; [ -n "$a" ] || a=$(probe); cd "$a" 2>/dev/null || true; w=${1/#~/$HOME}; h=$HOME; compgen -A file -- "$w" 2>/dev/null | while IFS= read -r f; do case $f in ./|../|.|..) continue ;; esac; case $w in .*) ;; *) case ${f##*/} in .*) continue ;; esac ;; esac; [ -d "$f" ] && f="$f/"; [ -n "$h" ] && f=${f/#$h/\~}; printf "%s\n" "$f"; done | head -n 100' _ "#;
-            let mut remote_line = script.to_string();
+            // at MAX_CANDIDATES rows. A directory-only command's
+            // argument switches compgen to `-A directory` (`cd <Tab>`
+            // never lists files).
+            let action = if *dirs_only { "directory" } else { "file" };
+            let script = format!(
+                r#"bash -c 'probe() {{ best=""; bs=-1; for d in /proc/[0-9]*; do read -r c < "$d/comm" 2>/dev/null || continue; case $c in bash|zsh|fish|nu|ksh|tcsh|dash|mksh) ;; *) continue ;; esac; case "$(readlink "$d/fd/0" 2>/dev/null)" in /dev/pts/*|/dev/tty[0-9]*) ;; *) continue ;; esac; cwd=$(readlink "$d/cwd" 2>/dev/null) || continue; [ -n "$cwd" ] || continue; raw=$(cat "$d/stat" 2>/dev/null) || continue; raw=${{raw#*) }}; set -- $raw; st=${{20}}; case $st in ""|*[!0-9]*) continue ;; esac; [ "$st" -gt "$bs" ] && {{ bs=$st; best=$cwd; }}; done; printf "%s" "$best"; }}; a=$2; [ -n "$a" ] || a=$(probe); cd "$a" 2>/dev/null || true; w=${{1/#~/$HOME}}; h=$HOME; compgen -A {action} -- "$w" 2>/dev/null | while IFS= read -r f; do case $f in ./|../|.|..) continue ;; esac; case $w in .*) ;; *) case ${{f##*/}} in .*) continue ;; esac ;; esac; [ -d "$f" ] && f="$f/"; [ -n "$h" ] && f=${{f/#$h/\~}}; printf "%s\n" "$f"; done | head -n 100' _ "#
+            );
+            let mut remote_line = script;
             remote_line.push_str(&sh_quote(word));
             remote_line.push(' ');
             remote_line.push_str(&sh_quote(anchor.as_deref().unwrap_or("")));
@@ -1487,10 +1538,16 @@ mod tests {
             Some("web1"),
             Some("/srv"),
         ) {
-            Route::Dynamic(DynamicRequest::RemotePaths { host, word, anchor }) => {
+            Route::Dynamic(DynamicRequest::RemotePaths {
+                host,
+                word,
+                anchor,
+                dirs_only,
+            }) => {
                 assert_eq!(host, "web1");
                 assert_eq!(word, "src/");
                 assert_eq!(anchor.as_deref(), Some("/srv"));
+                assert!(!dirs_only, "src/ has no command context");
             }
             other => panic!("expected remote paths route, got {other:?}?"),
         }
@@ -1498,10 +1555,24 @@ mod tests {
         // Unknown remote command: later words fall to remote paths
         // (was silent before remote path completion existed).
         match route(&argv("tail"), 1, "f", 5, &no_aliases(), Some("web1"), None) {
-            Route::Dynamic(DynamicRequest::RemotePaths { host, word, anchor }) => {
+            Route::Dynamic(DynamicRequest::RemotePaths {
+                host,
+                word,
+                anchor,
+                dirs_only,
+            }) => {
                 assert_eq!(host, "web1");
                 assert_eq!(word, "f");
                 assert_eq!(anchor, None, "no OSC 7 value → the script probes");
+                assert!(!dirs_only);
+            }
+            other => panic!("expected remote paths route, got {other:?}?"),
+        }
+
+        // A directory-only command's argument lists directories alone.
+        match route(&argv("cd"), 1, "", 3, &no_aliases(), Some("web1"), None) {
+            Route::Dynamic(DynamicRequest::RemotePaths { dirs_only, .. }) => {
+                assert!(dirs_only, "cd <Tab> lists directories only");
             }
             other => panic!("expected remote paths route, got {other:?}?"),
         }
@@ -1535,17 +1606,26 @@ mod tests {
             host: "web1".into(),
             word: String::new(),
             anchor: None,
+            dirs_only: false,
         };
         let paths_anchored = DynamicRequest::RemotePaths {
             host: "web1".into(),
             word: String::new(),
             anchor: Some("/srv".into()),
+            dirs_only: false,
+        };
+        let paths_dirs = DynamicRequest::RemotePaths {
+            host: "web1".into(),
+            word: String::new(),
+            anchor: None,
+            dirs_only: true,
         };
         assert_eq!(a.key(), b.key());
         assert_ne!(a.key(), remote.key());
         assert_ne!(remote.key(), commands.key());
         assert_ne!(commands.key(), paths.key());
         assert_ne!(paths.key(), paths_anchored.key(), "anchor changes the slot");
+        assert_ne!(paths.key(), paths_dirs.key(), "dirs_only changes the slot");
     }
 
     #[test]
@@ -1556,6 +1636,7 @@ mod tests {
                 host: "web1".into(),
                 word: "src/".into(),
                 anchor: Some("/srv/app".into()),
+                dirs_only: false,
             })
             .unwrap()
         );
@@ -1570,6 +1651,23 @@ mod tests {
     }
 
     #[test]
+    fn remote_paths_script_switches_to_directories_for_cd() {
+        let rendered = format!(
+            "{:?}",
+            build_command(&DynamicRequest::RemotePaths {
+                host: "web1".into(),
+                word: String::new(),
+                anchor: None,
+                dirs_only: true,
+            })
+            .unwrap()
+        );
+        // `cd <Tab>` lists directories only.
+        assert!(rendered.contains("compgen -A directory"));
+        assert!(!rendered.contains("compgen -A file"));
+    }
+
+    #[test]
     fn remote_paths_script_probes_without_an_anchor() {
         let rendered = format!(
             "{:?}",
@@ -1577,6 +1675,7 @@ mod tests {
                 host: "web1".into(),
                 word: "log".into(),
                 anchor: None,
+                dirs_only: false,
             })
             .unwrap()
         );
@@ -1587,6 +1686,44 @@ mod tests {
         assert!(rendered.contains("readlink"));
         // The anchor slot is an empty single-quoted word.
         assert!(rendered.contains("''"));
+    }
+
+    #[test]
+    fn dirs_only_context_follows_the_nearest_positional_word() {
+        let argv = |s: &str| token_texts(s);
+        assert!(is_dirs_only_context(&argv("cd")));
+        assert!(is_dirs_only_context(&argv("cd -P")));
+        assert!(is_dirs_only_context(&argv("pushd --")));
+        assert!(!is_dirs_only_context(&argv("ls")));
+        assert!(!is_dirs_only_context(&argv("ls -la")));
+        assert!(
+            !is_dirs_only_context(&argv("cd somewhere")),
+            "a positional argument ends the directory context"
+        );
+        assert!(!is_dirs_only_context(&argv("")));
+    }
+
+    #[test]
+    fn dirs_only_filter_keeps_directories() {
+        let candidates = vec![
+            Candidate {
+                display: "Documents/".into(),
+                insert: "Documents/".into(),
+                is_dir: true,
+            },
+            Candidate {
+                display: "notes.txt".into(),
+                insert: "notes.txt".into(),
+                is_dir: false,
+            },
+        ];
+        let kept = filter_dirs_only(candidates.clone(), &token_texts("cd"));
+        assert_eq!(inserts(kept), vec!["Documents/"]);
+        assert_eq!(
+            inserts(filter_dirs_only(candidates, &token_texts("vim"))).len(),
+            2,
+            "other commands keep both"
+        );
     }
 
     #[test]

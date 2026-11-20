@@ -662,8 +662,10 @@ impl InputBar {
                     if word.is_empty() {
                         return;
                     }
-                    let candidates =
-                        crate::completion::gather(word_start, &word, sources);
+                    let candidates = crate::completion::filter_dirs_only(
+                        crate::completion::gather(word_start, &word, sources),
+                        &argv,
+                    );
                     self.apply_candidates_at(candidates, word_start, &word, false);
                 }
             }
@@ -681,7 +683,10 @@ impl InputBar {
                 if word.is_empty() {
                     return;
                 }
-                let candidates = crate::completion::gather(word_start, &word, sources);
+                let candidates = crate::completion::filter_dirs_only(
+                    crate::completion::gather(word_start, &word, sources),
+                    &argv,
+                );
                 self.apply_candidates_at(candidates, word_start, &word, false);
             }
             crate::completion::Route::None => {}
@@ -1912,6 +1917,31 @@ mod tests {
         bar.insert_text("cat NOT");
         bar.tab_complete(&sources);
         assert_eq!(bar.buffer, "cat Notes.md ");
+    }
+
+    #[test]
+    fn tab_after_cd_lists_directories_only() {
+        let dir = TempDirGuard::new("dirs-only");
+        let cwd = dir.path().join("work");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::write(cwd.join("dot.txt"), "").unwrap();
+        std::fs::create_dir(cwd.join("Documents")).unwrap();
+        let sources = dir.sources(Some(cwd));
+
+        // `cd d<Tab>` folds onto the directory — the file never shows
+        // up (bash/zsh semantics).
+        let mut bar = InputBar::new(true);
+        bar.insert_text("cd d");
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "cd Documents/");
+        assert!(bar.completion.is_none(), "unique match applies outright");
+
+        // The same word after another command still sees both.
+        let mut bar = InputBar::new(true);
+        bar.insert_text("ls d");
+        bar.tab_complete(&sources);
+        assert!(bar.completion.is_some(), "ls d<Tab> keeps files and dirs");
+        assert_eq!(bar.buffer, "ls d");
     }
 
     #[test]

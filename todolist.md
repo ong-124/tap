@@ -115,6 +115,7 @@
   - 空洞修复：ssh 会话内非 Cobra 命令的词与 one-shot 行远程词原为 Route::None（cd Tab 无效果），新增 DynamicRequest::RemotePaths 走侧信道 compgen -A file；会话内首词按路径形态（/、~、. 开头）分流 RemotePaths/RemoteCommands
   - 脚本语义：裸词锚定远程 home（侧信道 cwd 恒为 home，交互 shell cwd 不可见是已知边界）、目录头词精确走头、~ 展开并回映射 `~/`（替换文本裸 ~ 会被 tilde 展开的坑用 \~ 解决）、隐藏项点号门控、目录尾 `/` 由 mark_trailing_slash_dirs 镜像 is_dir、head -n 100 截线
   - 验证：tapterm 381（+2）测试通过，clippy/fmt 干净，脚本行为 fake HOME 本地实测通过；待用户手测（ssh 后 cd Tab 列目录、逐层下降、~/ 保头；深层目录相对补全锚定 home 为已知边界）
+  - 修复轮次一（20261120-1801）：cd/pushd/rmdir 参数只补目录（用户反馈 ssh 下 cd Tab 文件目录一股脑）——本地 is_dirs_only_context + filter_dirs_only 两静态分支过滤，远程 RemotePaths.dirs_only 切 compgen -A directory（进缓存 key）；tapterm 386（+5）通过，待用户复测
 - [x] 【已完成】ssh 会话裸词远程 cwd 锚定（[详情](task/20261120-1733_ssh会话裸词cwd锚定.md)）
   - 梯度一：RemotePaths 加 anchor（会话内 OSC 7 真值经 Sources.session_remote_cwd → route → 脚本 `$2`，cd 失败天然回落 home；one-shot 行无会话真值恒 None；hostname 形式 OSC 7 被既有 host 校验拒收为已知限界）
   - 梯度二：脚本内 /proc 探测（comm∈shell 表、fd/0 指 pts、starttime 最新取 cwd；`${20}` 偏移修正设计笔误 + 非数字防御），cd 后跑现有 compgen 管道
