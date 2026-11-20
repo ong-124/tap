@@ -136,6 +136,9 @@ pub struct InputBar {
     /// ssh destination of the session running in the focused pane,
     /// snapshotted on each Tab from the completion sources.
     session_ssh_host: Option<String>,
+    /// The session's shell-reported (OSC 7) cwd, snapshotted alongside
+    /// the host — the anchor for remote path completion.
+    session_remote_cwd: Option<String>,
     /// In-flight dynamic query: the request key plus the channel its
     /// worker thread will answer on. Dropped on lock, config reload
     /// or when a newer request replaces it.
@@ -203,6 +206,7 @@ impl Default for InputBar {
             dynamic: true,
             aliases: std::collections::HashMap::new(),
             session_ssh_host: None,
+            session_remote_cwd: None,
             pending: None,
             dynamic_cache: std::collections::HashMap::new(),
             record_history: true,
@@ -608,6 +612,7 @@ impl InputBar {
             return;
         }
         self.session_ssh_host = sources.session_ssh_host.clone();
+        self.session_remote_cwd = sources.session_remote_cwd.clone();
 
         let (word_start, word, word_idx, argv) = self.token_context();
 
@@ -647,6 +652,7 @@ impl InputBar {
             word_start,
             &self.aliases,
             sources.session_ssh_host.as_deref(),
+            sources.session_remote_cwd.as_deref(),
         ) {
             crate::completion::Route::Dynamic(request) => {
                 if self.dynamic {
@@ -714,6 +720,7 @@ impl InputBar {
             word_start,
             &self.aliases,
             self.session_ssh_host.as_deref(),
+            self.session_remote_cwd.as_deref(),
         ) {
             crate::completion::Route::Dynamic(request) => Some(request),
             _ => None,
@@ -1849,6 +1856,7 @@ mod tests {
                 home: None,
                 cwd,
                 session_ssh_host: None,
+                session_remote_cwd: None,
             }
         }
     }
@@ -2355,6 +2363,7 @@ mod tests {
             home: None,
             cwd: None,
             session_ssh_host: None,
+            session_remote_cwd: None,
         }
     }
 }

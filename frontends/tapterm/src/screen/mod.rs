@@ -1319,23 +1319,22 @@ impl Screen<'_> {
     /// Build the completion environment (PATH from tap, home, and the
     /// focused pane's cwd) and run a Tab press through the bar. An ssh
     /// session detected in the pane's foreground process routes remote
-    /// completion at that host.
+    /// completion at that host, anchored at the session's shell-reported
+    /// cwd.
     fn input_bar_tab_complete(&mut self) {
-        #[cfg(not(target_os = "windows"))]
-        let ssh_session_host = {
-            let current = self.context_manager.current();
-            teletypewriter::foreground_process_cmdline(
-                *current.main_fd,
-                current.shell_pid,
-            )
-            .ok()
-            .and_then(|argv| crate::completion::ssh_route(&argv))
-            .map(|route| route.dest)
-        };
-        #[cfg(target_os = "windows")]
-        let ssh_session_host = None;
+        let ssh_session_host = self.foreground_ssh_host();
 
-        let cwd = self.focused_pane_cwd();
+        // Inside an ssh session the foreground probe lands on the local
+        // ssh client's cwd — meaningless as a remote directory — so only
+        // the shell-reported OSC 7 value is trusted there; it doubles as
+        // the remote completion anchor.
+        let osc7_cwd = self.pane_osc7_cwd();
+        let cwd = if ssh_session_host.is_some() {
+            osc7_cwd.clone()
+        } else {
+            self.focused_pane_cwd()
+        };
+        let session_remote_cwd = osc7_cwd.map(|p| p.to_string_lossy().into_owned());
 
         // Refresh the focus snapshot while the pane's directory is
         // already being probed (the ghost ranks same-cwd history first).
@@ -1344,8 +1343,38 @@ impl Screen<'_> {
             .set_focus_cwd(cwd.as_ref().map(|p| p.to_string_lossy().into_owned()));
         let mut sources = crate::completion::Sources::from_env(cwd);
         sources.session_ssh_host = ssh_session_host;
+        sources.session_remote_cwd = session_remote_cwd;
         self.renderer.input_bar.poll_dynamic();
         self.renderer.input_bar.tab_complete(&sources);
+    }
+
+    /// The ssh destination (host slot) of an interactive ssh/autossh
+    /// session running in the pane's foreground process, probed from
+    /// `/proc`. `None` on a local pane.
+    #[cfg(not(target_os = "windows"))]
+    fn foreground_ssh_host(&self) -> Option<String> {
+        let current = self.context_manager.current();
+        teletypewriter::foreground_process_cmdline(*current.main_fd, current.shell_pid)
+            .ok()
+            .and_then(|argv| crate::completion::ssh_route(&argv))
+            .map(|route| route.dest)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn foreground_ssh_host(&self) -> Option<String> {
+        None
+    }
+
+    /// The focused pane's shell-reported (OSC 7) directory: `None`
+    /// until a shell integration reported one — no probe fallback, so
+    /// callers get a value they can trust as remote ground truth.
+    fn pane_osc7_cwd(&self) -> Option<std::path::PathBuf> {
+        self.context_manager
+            .current()
+            .terminal
+            .lock()
+            .current_directory
+            .clone()
     }
 
     /// The focused pane's working directory: the shell-reported OSC 7
@@ -1376,7 +1405,16 @@ impl Screen<'_> {
     /// the close check, so a pane that just exited never records an
     /// unsent line — and is queued for the OSC 133 `D` exit backfill.
     fn submit_input_bar_line(&mut self) {
-        let cwd = self.focused_pane_cwd().unwrap_or_default();
+        // Inside an ssh session only the shell-reported OSC 7 value
+        // counts as the cwd (the probe would land on the local ssh
+        // client); a stale report `cd`s nowhere on the remote and is
+        // harmless — the history entry just carries no directory.
+        let cwd = if self.foreground_ssh_host().is_some() {
+            self.pane_osc7_cwd()
+        } else {
+            self.focused_pane_cwd()
+        }
+        .unwrap_or_default();
         let route_id = self.context_manager.current_route();
 
         // Masked lines are secrets: `take_submitted_line` already kept

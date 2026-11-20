@@ -25,6 +25,10 @@ pub struct Sources {
     pub home: Option<PathBuf>,
     pub cwd: Option<PathBuf>,
     pub session_ssh_host: Option<String>,
+    /// Shell-reported (OSC 7) cwd of the ssh session in the focused
+    /// pane — the anchor for remote path completion. `None` in local
+    /// panes or when the remote shell never reported a directory.
+    pub session_remote_cwd: Option<String>,
 }
 
 impl Sources {
@@ -39,6 +43,7 @@ impl Sources {
             home: dirs::home_dir(),
             cwd,
             session_ssh_host: None,
+            session_remote_cwd: None,
         }
     }
 }
@@ -495,7 +500,9 @@ pub enum Route {
 
 /// Route a Tab press. `argv` holds the unquoted words before the word
 /// being completed, `word_idx` its token index (`argv.len()` when the
-/// word is empty), `word_start` its char position.
+/// word is empty), `word_start` its char position. `remote_cwd` is the
+/// ssh session's shell-reported cwd (OSC 7) when one is live — it
+/// anchors remote path completion.
 pub fn route(
     argv: &[String],
     word_idx: usize,
@@ -503,6 +510,7 @@ pub fn route(
     word_start: usize,
     aliases: &HashMap<String, String>,
     session_ssh_host: Option<&str>,
+    remote_cwd: Option<&str>,
 ) -> Route {
     // One-shot `ssh host cmd …` line: host slot completes statically,
     // remote words query the remote host.
@@ -534,9 +542,12 @@ pub fn route(
                     word: word.to_string(),
                     host: Some(ssh.dest.clone()),
                 }),
+                // No live session yet on a one-shot line, so there is
+                // no shell-reported cwd to anchor with.
                 None => Route::Dynamic(DynamicRequest::RemotePaths {
                     host: ssh.dest,
                     word: word.to_string(),
+                    anchor: None,
                 }),
             };
         }
@@ -545,13 +556,16 @@ pub fn route(
     // Inside an interactive ssh session: everything is remote. A
     // path-shaped first word lists remote files, any other first word
     // lists remote command names; later words query a Cobra tool
-    // remotely or fall through to remote path completion.
+    // remotely or fall through to remote path completion. The
+    // session's shell-reported cwd anchors path completion.
     if let Some(host) = session_ssh_host {
+        let anchor = remote_cwd.map(str::to_string);
         if argv.is_empty() {
             return Route::Dynamic(if is_path_word(word) {
                 DynamicRequest::RemotePaths {
                     host: host.to_string(),
                     word: word.to_string(),
+                    anchor,
                 }
             } else {
                 DynamicRequest::RemoteCommands {
@@ -570,6 +584,7 @@ pub fn route(
             None => Route::Dynamic(DynamicRequest::RemotePaths {
                 host: host.to_string(),
                 word: word.to_string(),
+                anchor,
             }),
         };
     }
@@ -614,6 +629,11 @@ pub enum DynamicRequest {
     RemotePaths {
         host: String,
         word: String,
+        /// Shell-reported cwd of the remote session (OSC 7) — the
+        /// remote script `cd`s here before completing. `None` lets the
+        /// script probe the interactive shell's cwd over `/proc` and
+        /// fall back to the remote home.
+        anchor: Option<String>,
     },
 }
 
@@ -646,8 +666,13 @@ impl DynamicRequest {
             DynamicRequest::RemoteCommands { host, word } => {
                 format!("r\u{1}{host}\u{1}{word}")
             }
-            DynamicRequest::RemotePaths { host, word } => {
-                format!("p\u{1}{host}\u{1}{word}")
+            DynamicRequest::RemotePaths { host, word, anchor } => {
+                let mut key = format!("p\u{1}{host}\u{1}{word}");
+                if let Some(anchor) = anchor {
+                    key.push('\u{1}');
+                    key.push_str(anchor);
+                }
+                key
             }
         }
     }
@@ -855,19 +880,24 @@ fn build_command(request: &DynamicRequest) -> Option<std::process::Command> {
             );
             Some(ssh_command(host, &script))
         }
-        DynamicRequest::RemotePaths { host, word } => {
+        DynamicRequest::RemotePaths { host, word, anchor } => {
             // File candidates over the side channel. The channel lands
             // in the remote home, and the interactive shell's cwd is
-            // invisible to it — so the word itself carries the anchor:
-            // a bare word lists the home, a word with a directory head
-            // (`src/`, `./`, `/var/log/`) walks it, `~` expands
-            // against the remote $HOME and completes back as `~`.
+            // invisible to it — the word carries its own anchor when it
+            // can (`~`, absolute, directory head), and relative words
+            // anchor at `$2` (the session's shell-reported cwd) or, in
+            // its absence, at a `/proc` probe for the newest interactive
+            // shell (uid-gated, pts-attached, covers tmux panes); the
+            // remote home is the final fallback. `~` words expand
+            // against the remote $HOME and complete back as `~`.
             // Hidden entries only surface once the word starts with a
-            // dot, directories carry a trailing `/`, the wire is
-            // capped at MAX_CANDIDATES rows.
-            let script = r#"bash -c 'w=${1/#~/$HOME}; h=$HOME; compgen -A file -- "$w" 2>/dev/null | while IFS= read -r f; do case $f in ./|../|.|..) continue ;; esac; case $w in .*) ;; *) case ${f##*/} in .*) continue ;; esac ;; esac; [ -d "$f" ] && f="$f/"; [ -n "$h" ] && f=${f/#$h/\~}; printf "%s\n" "$f"; done | head -n 100' _ "#;
+            // dot, directories carry a trailing `/`, the wire is capped
+            // at MAX_CANDIDATES rows.
+            let script = r#"bash -c 'probe() { best=""; bs=-1; for d in /proc/[0-9]*; do read -r c < "$d/comm" 2>/dev/null || continue; case $c in bash|zsh|fish|nu|ksh|tcsh|dash|mksh) ;; *) continue ;; esac; case "$(readlink "$d/fd/0" 2>/dev/null)" in /dev/pts/*|/dev/tty[0-9]*) ;; *) continue ;; esac; cwd=$(readlink "$d/cwd" 2>/dev/null) || continue; [ -n "$cwd" ] || continue; raw=$(cat "$d/stat" 2>/dev/null) || continue; raw=${raw#*) }; set -- $raw; st=${20}; case $st in ""|*[!0-9]*) continue ;; esac; [ "$st" -gt "$bs" ] && { bs=$st; best=$cwd; }; done; printf "%s" "$best"; }; a=$2; [ -n "$a" ] || a=$(probe); cd "$a" 2>/dev/null || true; w=${1/#~/$HOME}; h=$HOME; compgen -A file -- "$w" 2>/dev/null | while IFS= read -r f; do case $f in ./|../|.|..) continue ;; esac; case $w in .*) ;; *) case ${f##*/} in .*) continue ;; esac ;; esac; [ -d "$f" ] && f="$f/"; [ -n "$h" ] && f=${f/#$h/\~}; printf "%s\n" "$f"; done | head -n 100' _ "#;
             let mut remote_line = script.to_string();
             remote_line.push_str(&sh_quote(word));
+            remote_line.push(' ');
+            remote_line.push_str(&sh_quote(anchor.as_deref().unwrap_or("")));
             Some(ssh_command(host, &remote_line))
         }
     }
@@ -1106,6 +1136,7 @@ mod tests {
             home,
             cwd,
             session_ssh_host: None,
+            session_remote_cwd: None,
         }
     }
 
@@ -1276,16 +1307,24 @@ mod tests {
         let argv = |s: &str| token_texts(s);
 
         assert!(matches!(
-            route(&argv(""), 0, "ku", 0, &no_aliases(), None),
+            route(&argv(""), 0, "ku", 0, &no_aliases(), None, None),
             Route::Command
         ));
         // Non-command first word (`$VA`, `./x`) falls to Path.
         assert!(matches!(
-            route(&argv(""), 0, "$VA", 0, &no_aliases(), None),
+            route(&argv(""), 0, "$VA", 0, &no_aliases(), None, None),
             Route::Path
         ));
         // Plain tool at a later word → local dynamic query.
-        match route(&argv("kubectl get"), 2, "pod", 11, &no_aliases(), None) {
+        match route(
+            &argv("kubectl get"),
+            2,
+            "pod",
+            11,
+            &no_aliases(),
+            None,
+            None,
+        ) {
             Route::Dynamic(DynamicRequest::Cobra {
                 tool,
                 args,
@@ -1301,7 +1340,7 @@ mod tests {
         }
         // Unknown first word keeps static path completion.
         assert!(matches!(
-            route(&argv("ls -la"), 2, "sr", 6, &no_aliases(), None),
+            route(&argv("ls -la"), 2, "sr", 6, &no_aliases(), None, None),
             Route::Path
         ));
     }
@@ -1351,16 +1390,24 @@ mod tests {
 
         // Host slot → static hosts.
         assert!(matches!(
-            route(&argv("ssh"), 1, "de", 4, &no_aliases(), None),
+            route(&argv("ssh"), 1, "de", 4, &no_aliases(), None, None),
             Route::SshHosts
         ));
         assert!(matches!(
-            route(&argv("ssh -p 2222"), 3, "user@", 11, &no_aliases(), None),
+            route(
+                &argv("ssh -p 2222"),
+                3,
+                "user@",
+                11,
+                &no_aliases(),
+                None,
+                None
+            ),
             Route::SshHosts
         ));
 
         // First remote word → remote command names.
-        match route(&argv("ssh web1"), 2, "", 8, &no_aliases(), None) {
+        match route(&argv("ssh web1"), 2, "", 8, &no_aliases(), None, None) {
             Route::Dynamic(DynamicRequest::RemoteCommands { host, word }) => {
                 assert_eq!(host, "web1");
                 assert_eq!(word, "");
@@ -1376,6 +1423,7 @@ mod tests {
             21,
             &no_aliases(),
             None,
+            None,
         ) {
             Route::Dynamic(DynamicRequest::Cobra {
                 tool, host, word, ..
@@ -1388,8 +1436,16 @@ mod tests {
         }
 
         // Remote non-Cobra tool → remote path completion.
-        match route(&argv("ssh web1 tail -f"), 4, "log", 16, &no_aliases(), None) {
-            Route::Dynamic(DynamicRequest::RemotePaths { host, word }) => {
+        match route(
+            &argv("ssh web1 tail -f"),
+            4,
+            "log",
+            16,
+            &no_aliases(),
+            None,
+            None,
+        ) {
+            Route::Dynamic(DynamicRequest::RemotePaths { host, word, .. }) => {
                 assert_eq!(host, "web1");
                 assert_eq!(word, "log");
             }
@@ -1402,7 +1458,7 @@ mod tests {
         let argv = |s: &str| token_texts(s);
 
         // First word in the remote shell → remote command names.
-        match route(&argv(""), 0, "kt", 0, &no_aliases(), Some("web1")) {
+        match route(&argv(""), 0, "kt", 0, &no_aliases(), Some("web1"), None) {
             Route::Dynamic(DynamicRequest::RemoteCommands { host, word }) => {
                 assert_eq!(host, "web1");
                 assert_eq!(word, "kt");
@@ -1411,7 +1467,7 @@ mod tests {
         }
 
         // Remote Cobra query, alias-resolved.
-        match route(&argv("k get pod"), 3, "", 9, &aliases(), Some("web1")) {
+        match route(&argv("k get pod"), 3, "", 9, &aliases(), Some("web1"), None) {
             Route::Dynamic(DynamicRequest::Cobra { tool, host, .. }) => {
                 assert_eq!(tool, "kubectl");
                 assert_eq!(host.as_deref(), Some("web1"));
@@ -1420,21 +1476,32 @@ mod tests {
         }
 
         // Path-shaped first word → remote file candidates, not
-        // remote command names.
-        match route(&argv(""), 0, "src/", 0, &no_aliases(), Some("web1")) {
-            Route::Dynamic(DynamicRequest::RemotePaths { host, word }) => {
+        // remote command names, anchored at the session's reported
+        // cwd.
+        match route(
+            &argv(""),
+            0,
+            "src/",
+            0,
+            &no_aliases(),
+            Some("web1"),
+            Some("/srv"),
+        ) {
+            Route::Dynamic(DynamicRequest::RemotePaths { host, word, anchor }) => {
                 assert_eq!(host, "web1");
                 assert_eq!(word, "src/");
+                assert_eq!(anchor.as_deref(), Some("/srv"));
             }
             other => panic!("expected remote paths route, got {other:?}?"),
         }
 
         // Unknown remote command: later words fall to remote paths
         // (was silent before remote path completion existed).
-        match route(&argv("tail"), 1, "f", 5, &no_aliases(), Some("web1")) {
-            Route::Dynamic(DynamicRequest::RemotePaths { host, word }) => {
+        match route(&argv("tail"), 1, "f", 5, &no_aliases(), Some("web1"), None) {
+            Route::Dynamic(DynamicRequest::RemotePaths { host, word, anchor }) => {
                 assert_eq!(host, "web1");
                 assert_eq!(word, "f");
+                assert_eq!(anchor, None, "no OSC 7 value → the script probes");
             }
             other => panic!("expected remote paths route, got {other:?}?"),
         }
@@ -1467,11 +1534,18 @@ mod tests {
         let paths = DynamicRequest::RemotePaths {
             host: "web1".into(),
             word: String::new(),
+            anchor: None,
+        };
+        let paths_anchored = DynamicRequest::RemotePaths {
+            host: "web1".into(),
+            word: String::new(),
+            anchor: Some("/srv".into()),
         };
         assert_eq!(a.key(), b.key());
         assert_ne!(a.key(), remote.key());
         assert_ne!(remote.key(), commands.key());
         assert_ne!(commands.key(), paths.key());
+        assert_ne!(paths.key(), paths_anchored.key(), "anchor changes the slot");
     }
 
     #[test]
@@ -1481,15 +1555,38 @@ mod tests {
             build_command(&DynamicRequest::RemotePaths {
                 host: "web1".into(),
                 word: "src/".into(),
+                anchor: Some("/srv/app".into()),
             })
             .unwrap()
         );
-        // The word rides as the script's argv, hidden entries gated on
-        // a dotted word, the wire capped at MAX_CANDIDATES rows.
+        // The word and anchor ride as the script's argv, hidden entries
+        // gated on a dotted word, the wire capped at MAX_CANDIDATES
+        // rows.
         assert!(rendered.contains("compgen -A file"));
         assert!(rendered.contains("case $w in .*"));
         assert!(rendered.contains("head -n 100"));
         assert!(rendered.contains("src/"));
+        assert!(rendered.contains("/srv/app"));
+    }
+
+    #[test]
+    fn remote_paths_script_probes_without_an_anchor() {
+        let rendered = format!(
+            "{:?}",
+            build_command(&DynamicRequest::RemotePaths {
+                host: "web1".into(),
+                word: "log".into(),
+                anchor: None,
+            })
+            .unwrap()
+        );
+        // An empty anchor makes the script run the /proc probe (newest
+        // pts-attached shell) before completing.
+        assert!(rendered.contains("probe()"));
+        assert!(rendered.contains("/proc/[0-9]*"));
+        assert!(rendered.contains("readlink"));
+        // The anchor slot is an empty single-quoted word.
+        assert!(rendered.contains("''"));
     }
 
     #[test]
@@ -1669,7 +1766,7 @@ mod tests {
             std::env::var("TAP_E2E_SSH_HOST").unwrap_or_else(|_| "172.24.0.145".into());
         // In an ssh session the buffer is just "kube": empty argv in
         // front, session host carried by Sources, not the line.
-        let request = match route(&[], 0, "kube", 0, &no_aliases(), Some(&host)) {
+        let request = match route(&[], 0, "kube", 0, &no_aliases(), Some(&host), None) {
             Route::Dynamic(request) => request,
             other => panic!("expected dynamic route, got {other:?}"),
         };
