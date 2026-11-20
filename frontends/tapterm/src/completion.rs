@@ -134,10 +134,22 @@ pub fn command_candidates(prefix: &str, path_dirs: &[PathBuf]) -> Vec<Candidate>
     candidates
 }
 
+/// Case-insensitive prefix test: ASCII letters fold case, non-ASCII
+/// compares verbatim (CJK is caseless; full Unicode folding is not
+/// worth its cost in a directory scan). Shared by the candidate
+/// superset guards in the input bar.
+pub fn starts_with_ignore_case(name: &str, prefix: &str) -> bool {
+    let mut name = name.chars();
+    prefix
+        .chars()
+        .all(|p| name.next().is_some_and(|n| n.eq_ignore_ascii_case(&p)))
+}
+
 /// Filesystem candidates for a path word. Relative words anchor at the
 /// pane cwd; `~` words match through the expanded home path but
 /// complete back keeping the typed `~` head. Hidden entries complete
-/// only once the component being typed starts with a dot.
+/// only once the component being typed starts with a dot. Matching
+/// ignores case; exact-case matches rank ahead of folded ones.
 pub fn path_candidates(
     word: &str,
     cwd: Option<&Path>,
@@ -196,7 +208,7 @@ pub fn path_candidates(
         if !hidden_ok && name.starts_with('.') {
             continue;
         }
-        if !name.starts_with(&prefix) {
+        if !starts_with_ignore_case(&name, &prefix) {
             continue;
         }
         // Follow symlinks: a link pointing at a directory completes with
@@ -224,7 +236,13 @@ pub fn path_candidates(
         }
     }
 
-    candidates.sort_by(|a, b| a.insert.cmp(&b.insert));
+    // Exact-case matches first (the display starts with the prefix as
+    // typed), then the folded ones — each group sorted by insert text.
+    candidates.sort_by(|a, b| {
+        let a_exact = a.display.starts_with(&prefix);
+        let b_exact = b.display.starts_with(&prefix);
+        b_exact.cmp(&a_exact).then_with(|| a.insert.cmp(&b.insert))
+    });
     candidates
 }
 
@@ -1070,6 +1088,32 @@ mod tests {
         assert!(inserts(gather(2, "src/", &sources)).is_empty());
         std::fs::write(dir.path().join("src").join("main.rs"), "").unwrap();
         assert_eq!(inserts(gather(2, "src/", &sources)), vec!["src/main.rs"]);
+    }
+
+    #[test]
+    fn path_completion_matches_case_insensitively() {
+        let dir = TempDir::new("ci");
+        std::fs::write(dir.path().join("Foo.txt"), "").unwrap();
+        std::fs::write(dir.path().join("README.md"), "").unwrap();
+        std::fs::create_dir(dir.path().join("Src")).unwrap();
+        let sources = sources_with(Some(dir.path().to_path_buf()), None);
+
+        // Any case in the query reaches the real file name.
+        assert_eq!(inserts(gather(2, "foo", &sources)), vec!["Foo.txt"]);
+        assert_eq!(inserts(gather(2, "FOO", &sources)), vec!["Foo.txt"]);
+        assert_eq!(inserts(gather(2, "readm", &sources)), vec!["README.md"]);
+        assert_eq!(inserts(gather(2, "s", &sources)), vec!["Src/"]);
+
+        // Exact-case matches rank ahead of folded ones.
+        std::fs::write(dir.path().join("foobar"), "").unwrap();
+        assert_eq!(
+            inserts(gather(2, "fo", &sources)),
+            vec!["foobar", "Foo.txt"]
+        );
+
+        // Non-ASCII compares verbatim (caseless scripts).
+        std::fs::write(dir.path().join("中文.txt"), "").unwrap();
+        assert_eq!(inserts(gather(2, "中文", &sources)), vec!["中文.txt"]);
     }
 
     #[test]

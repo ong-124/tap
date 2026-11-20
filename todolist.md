@@ -106,3 +106,8 @@
   - 根因：add_context 单分屏分支克隆 pane 级 dimension（post-margin panel rect）当窗口尺寸用，ContextGrid::new 再扣一次 scaled_margin（含输入栏高度），且每 tab 克隆上一 tab 已缩小值形成复利
   - 修复：add_context 无条件改用 current_grid().grid_dimension()（grid 级窗口尺寸 + 反缩放 margin，多分屏分支既有的正确路径）
   - 验证：tapterm 376 测试通过，clippy/fmt 干净，待用户手测（连续新建多个 tab pane 高度不变）
+- [x] 【已完成】输入栏文件路径补全大小写不敏感（[详情](task/20261120-1703_输入栏路径补全大小写不敏感.md)）
+  - 候选匹配：path_candidates 前缀比较改 starts_with_ignore_case（ASCII 折叠、非 ASCII 逐字），排序双级键精确命中优先
+  - 守卫与循环：apply_candidates_at 防缩短校验同步折叠（多候选逐候选比较，LCP 不能顶替）；空 LCP 时 CompletionState.current 存已输入词，修复菜单无法进入循环
+  - 顺手修复 input_bar.rs 既有 clippy manual_slice_fill 警告（密文掩码改 chars.fill）
+  - 验证：tapterm 379（+3）测试通过，clippy/fmt 干净；命令与 ssh 主机补全维持大小写敏感；待用户手测（foo/FOO 补到 Foo.txt、混合大小写 Tab 循环不缩短输入）

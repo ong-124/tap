@@ -3,10 +3,10 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+use std::time::{Duration, Instant};
 use tap_backend::config::input_bar::SizeSpec;
 use tap_backend::sugarloaf::text::DrawOpts;
 use tap_backend::sugarloaf::Sugarloaf;
-use std::time::{Duration, Instant};
 
 /// Convert `[f32; 4]` colour to the `[u8; 4]` non-premul form the
 /// `Text` draw path expects (the vertex shader premultiplies).
@@ -803,7 +803,8 @@ impl InputBar {
     /// Before anything is applied, the candidate must be a superset of
     /// the word being completed (Warp input.rs:13736-13741): a late or
     /// cached dynamic answer that does not extend the typed word is
-    /// dropped rather than shortening the user's input.
+    /// dropped rather than shortening the user's input. The comparison
+    /// folds case, mirroring the case-insensitive candidate match.
     fn apply_candidates_at(
         &mut self,
         candidates: Vec<crate::completion::Candidate>,
@@ -816,7 +817,7 @@ impl InputBar {
             1 => {
                 let candidate_word =
                     crate::completion::unescape_word(&candidates[0].insert);
-                if !candidate_word.starts_with(word) {
+                if !crate::completion::starts_with_ignore_case(&candidate_word, word) {
                     return;
                 }
                 let mut insert = candidates[0].insert.clone();
@@ -831,14 +832,23 @@ impl InputBar {
                     candidates.iter().map(|c| c.insert.as_str()).collect();
                 let prefix = crate::completion::common_prefix(&inserts);
                 let prefix_word = crate::completion::unescape_word(&prefix);
-                // Guard: candidates must extend the typed word. A stale
-                // answer that doesn't is dropped whole — inserting its
-                // LCP would shorten the input, and a cycle menu over it
-                // would do the same on the next Tab.
-                if !prefix_word.starts_with(word) {
+                // Guard: every candidate must extend the typed word
+                // (case-folded, like the match that produced them). A
+                // stale answer containing non-extensions is dropped
+                // whole — its LCP would shorten the input, and a cycle
+                // menu over it would do the same on the next Tab. The
+                // LCP itself cannot stand in: mixed-case matches share
+                // no exact-case prefix, yet each still extends the word.
+                let extends_word = |candidate: &crate::completion::Candidate| {
+                    let candidate_word =
+                        crate::completion::unescape_word(&candidate.insert);
+                    crate::completion::starts_with_ignore_case(&candidate_word, word)
+                };
+                if !candidates.iter().all(extends_word) {
                     return;
                 }
-                if prefix_word.chars().count() > word.chars().count() {
+                let inserted = prefix_word.chars().count() > word.chars().count();
+                if inserted {
                     self.apply_word(word_start, &prefix);
                 }
                 // When the LCP is a full candidate it already sits in
@@ -854,7 +864,14 @@ impl InputBar {
                     word_start,
                     // Unquoted form: the buffer holds the escaped
                     // insert, the next Tab compares tokenized text.
-                    current: prefix_word,
+                    // Without an inserted LCP (e.g. mixed-case
+                    // candidates with an empty prefix) the typed word
+                    // is what still sits in the buffer.
+                    current: if inserted {
+                        prefix_word
+                    } else {
+                        word.to_string()
+                    },
                     candidates,
                     index,
                 });
@@ -1318,9 +1335,7 @@ impl InputBar {
         // char count is unchanged, so the scroll window and caret math
         // carry over untouched.
         if self.masked {
-            for c in &mut chars {
-                *c = MASK_CHAR;
-            }
+            chars.fill(MASK_CHAR);
         }
         // The composition text sits at the caret; keep room for it and
         // for the ghost suffix (they are mutually exclusive).
@@ -1874,6 +1889,42 @@ mod tests {
         // without action.
         bar.tab_complete(&sources);
         assert_eq!(bar.buffer, "hello ");
+    }
+
+    #[test]
+    fn tab_path_completion_ignores_case() {
+        let dir = TempDirGuard::new("ci-path");
+        let cwd = dir.path().join("work");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::write(cwd.join("Notes.md"), "").unwrap();
+        let sources = dir.sources(Some(cwd));
+
+        // Any case in the query inserts the real file name.
+        let mut bar = InputBar::new(true);
+        bar.insert_text("cat NOT");
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "cat Notes.md ");
+    }
+
+    #[test]
+    fn tab_mixed_case_candidates_open_menu_without_shortening() {
+        let dir = TempDirGuard::new("ci-menu");
+        let cwd = dir.path().join("work");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::write(cwd.join("Foo.txt"), "").unwrap();
+        std::fs::write(cwd.join("foobar"), "").unwrap();
+        let sources = dir.sources(Some(cwd));
+
+        // The LCP is empty ('F' vs 'f'), so the first Tab only opens
+        // the cycle menu — never shortens the typed word — and the
+        // next applies the exact-case candidate.
+        let mut bar = InputBar::new(true);
+        bar.insert_text("cat f");
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "cat f");
+        assert!(bar.completion.is_some());
+        bar.tab_complete(&sources);
+        assert_eq!(bar.buffer, "cat foobar", "exact-case candidate first");
     }
 
     #[test]
