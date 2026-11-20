@@ -128,3 +128,7 @@
   - 回显严格两态：作用域有历史只走该作用域（ts 降序），无历史走全局频次兜底（uses 降序，上限 255）；↑ 浏览与 ghost 共用 browse 列表；会话内同作用域全局去重移尾
   - exit 回填按 `usages.id` 精确 UPDATE（替换 (ts,line) 匹配）；trim 启动时单事务删老 usages + 清孤儿 dirs，commands.uses 终身保留；旧 TSV 忽略不迁移不删除
   - 验证：tapterm 383（+13）测试通过，clippy 0 告警，触碰文件 fmt 干净，workspace check 通过；待用户手测（分目录 ↑ 隔离回显、重跑沉顶、ssh 远端目录/主机聚合与 alias 合流、密文不入库、多窗口并发）
+- [x] 【已完成】config 配置清单归档（[详情](task/20261120-1953_config配置清单归档.md)）
+  - 通读 tap-backend/src/config 全部 16 文件 + tap-vt colors 默认值 + sugarloaf fonts + tapterm cli/bindings 动作词表，产出 docs/20261120-1953_config配置清单.md（23 节）
+  - 覆盖：配置位置/热重载/优先级、顶层项、[cursor]/[window]/[navigation]/[renderer]/[fonts]/[colors]/[keyboard]/[title]/[scroll]/[developer]/[hints]/[bell]/[notify-on-command-finish]/[effects]/[input-bar]/[panel]/[bindings]/[platform] 全部键的默认值与可选值，CLI 参数与环境变量，最小示例，本 fork 与上游 rio 默认值差异备忘
+  - 纯文档任务，未改代码；待用户审阅文档内容
