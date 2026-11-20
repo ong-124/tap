@@ -141,3 +141,7 @@
   - 桌面图标：misc/logo.svg 覆盖为本机 Flat-Remix-Blue-Dark 主题 tomato.svg（红番茄绿叶矢量），goreleaser/nix/cargo-deb 安装链引用文件名不变零改动
   - 窗口图标：tomato.svg 经 ffmpeg librsvg 渲染 16/32/48/64/128/256 六档 PNG 合成 PNG-in-ICO 覆盖 tap-logo.ico（410598→33878 字节），window.rs LOGO_ICON 常量大小同步
   - 验证：cargo check -p tapterm 通过，release/tap 已重建安装；待用户手测（启动 tap 任务栏/标题栏为西红柿图标）
+- [x] 【已完成】输入栏提示符换为西红柿 emoji（[详情](task/20261120-2130_输入栏提示符换为西红柿emoji.md)）
+  - 原符号 ❯ U+276F（Fira Code 无字形）广播串 `>> ❯` 经 shape_for 首字符机制钉死等宽字体必豆腐，换为 🍅 U+1F345（正常 `🍅`、广播 `>> 🍅`）
+  - 广播 marker 与提示符拆两次独立 draw，各自按首字符解析字体，🍅 走 fontconfig discovery → Noto Color Emoji（swash CBDT 彩色位图 + color atlas 链路确认可行）
+  - 验证：check / clippy（触碰文件干净）/ fmt 通过，tapterm 387 测试通过，release 已重建；待用户手测两种模式提示符显示彩色 🍅

@@ -48,7 +48,10 @@ const PREEDIT_UNDERLINE_HEIGHT: f32 = 2.0;
 /// it the next Tab asks the tool again (pods come and go).
 const DYNAMIC_CACHE_TTL: Duration = Duration::from_secs(10);
 
-const PROMPT_SYMBOL: &str = "\u{276F}";
+/// Tomato emoji — Fira Code has no glyph for the previous `❯`
+/// (U+276F), which rendered as tofu; the tomato resolves through
+/// fontconfig fallback to Noto Color Emoji.
+const PROMPT_SYMBOL: &str = "\u{1F345}";
 /// Prompt prefix while a broadcast is armed.
 const BROADCAST_MARKER: &str = ">> ";
 const LOCKED_HINT: &str = "keys pass through";
@@ -1335,22 +1338,31 @@ impl InputBar {
         }
 
         // Prompt symbol, prefixed with the broadcast marker while a
-        // fan-out is armed: one draw call, the marker shares the
+        // fan-out is armed. Two separate draw runs: shaping resolves
+        // the font from each run's first character, so a combined
+        // ">> 🍅" run would pin the tomato to the mono font (no
+        // emoji glyphs) and render tofu. The marker shares the
         // prompt color and the width math carries over untouched.
         let prompt_opts = DrawOpts {
             font_size,
             color: color_u8(PROMPT_COLOR),
             ..DrawOpts::default()
         };
-        let prompt = if self.broadcast {
-            format!("{BROADCAST_MARKER}{PROMPT_SYMBOL}")
-        } else {
-            PROMPT_SYMBOL.to_string()
-        };
-        let prompt_width =
-            sugarloaf
-                .text_mut()
-                .draw(content_x, text_y, &prompt, &prompt_opts);
+        let mut prompt_width = 0.0;
+        if self.broadcast {
+            prompt_width += sugarloaf.text_mut().draw(
+                content_x,
+                text_y,
+                BROADCAST_MARKER,
+                &prompt_opts,
+            );
+        }
+        prompt_width += sugarloaf.text_mut().draw(
+            content_x + prompt_width,
+            text_y,
+            PROMPT_SYMBOL,
+            &prompt_opts,
+        );
         let text_x = content_x + prompt_width + PROMPT_GAP;
 
         // Right edge of the text area.
