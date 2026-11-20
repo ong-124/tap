@@ -72,6 +72,13 @@ pub fn is_command_word(word_start_char: usize, word: &str) -> bool {
         && !word.starts_with('$')
 }
 
+/// Whether a first word is shaped like a path: carries a path anchor
+/// (`/`, `~`, `.`), so in a remote session it routes to remote file
+/// candidates instead of remote command names.
+fn is_path_word(word: &str) -> bool {
+    word.contains('/') || word.starts_with('~') || word.starts_with('.')
+}
+
 /// Candidates for a word. Dispatches on first-word-ness.
 pub fn gather(word_start_char: usize, word: &str, sources: &Sources) -> Vec<Candidate> {
     if is_command_word(word_start_char, word) {
@@ -482,7 +489,7 @@ pub enum Route {
     SshHosts,
     /// A dynamic `__complete`-style query (local or over ssh).
     Dynamic(DynamicRequest),
-    /// Nothing to offer (e.g. a remote word we don't know how to ask).
+    /// Nothing to offer (a flag-region word of a one-shot ssh line).
     None,
 }
 
@@ -525,21 +532,32 @@ pub fn route(
                     tool,
                     args: remote_argv[1..].to_vec(),
                     word: word.to_string(),
-                    host: Some(ssh.dest),
+                    host: Some(ssh.dest.clone()),
                 }),
-                None => Route::None,
+                None => Route::Dynamic(DynamicRequest::RemotePaths {
+                    host: ssh.dest,
+                    word: word.to_string(),
+                }),
             };
         }
     }
 
-    // Inside an interactive ssh session: everything is remote. First
-    // word → remote command names, then Cobra tools query remotely.
-    // Unknown shapes stay silent (no remote path completion).
+    // Inside an interactive ssh session: everything is remote. A
+    // path-shaped first word lists remote files, any other first word
+    // lists remote command names; later words query a Cobra tool
+    // remotely or fall through to remote path completion.
     if let Some(host) = session_ssh_host {
         if argv.is_empty() {
-            return Route::Dynamic(DynamicRequest::RemoteCommands {
-                host: host.to_string(),
-                word: word.to_string(),
+            return Route::Dynamic(if is_path_word(word) {
+                DynamicRequest::RemotePaths {
+                    host: host.to_string(),
+                    word: word.to_string(),
+                }
+            } else {
+                DynamicRequest::RemoteCommands {
+                    host: host.to_string(),
+                    word: word.to_string(),
+                }
             });
         }
         return match resolve_tool(&argv[0], aliases) {
@@ -549,7 +567,10 @@ pub fn route(
                 word: word.to_string(),
                 host: Some(host.to_string()),
             }),
-            None => Route::None,
+            None => Route::Dynamic(DynamicRequest::RemotePaths {
+                host: host.to_string(),
+                word: word.to_string(),
+            }),
         };
     }
 
@@ -574,7 +595,10 @@ pub fn route(
 
 /// A dynamic completion query. `Cobra` runs `<tool> __completeNoDesc
 /// <args…> <word>`, optionally through ssh; `RemoteCommands` lists
-/// command names on a remote host (compgen).
+/// command names on a remote host (compgen); `RemotePaths` lists
+/// filesystem candidates on a remote host (`compgen -A file`,
+/// anchored at the remote home — the side channel has no way to see
+/// the interactive shell's cwd).
 #[derive(Debug)]
 pub enum DynamicRequest {
     Cobra {
@@ -584,6 +608,10 @@ pub enum DynamicRequest {
         host: Option<String>,
     },
     RemoteCommands {
+        host: String,
+        word: String,
+    },
+    RemotePaths {
         host: String,
         word: String,
     },
@@ -618,6 +646,9 @@ impl DynamicRequest {
             DynamicRequest::RemoteCommands { host, word } => {
                 format!("r\u{1}{host}\u{1}{word}")
             }
+            DynamicRequest::RemotePaths { host, word } => {
+                format!("p\u{1}{host}\u{1}{word}")
+            }
         }
     }
 
@@ -627,6 +658,7 @@ impl DynamicRequest {
         match self {
             DynamicRequest::Cobra { host: Some(_), .. } => true,
             DynamicRequest::RemoteCommands { .. } => true,
+            DynamicRequest::RemotePaths { .. } => true,
             DynamicRequest::Cobra { host: None, .. } => false,
         }
     }
@@ -767,7 +799,13 @@ pub fn spawn_dynamic(request: DynamicRequest) -> mpsc::Receiver<DynamicResult> {
             let _ = guard.wait(); // reap
         }
 
-        let (candidates, no_space) = parse_complete_output(&raw);
+        let (mut candidates, no_space) = parse_complete_output(&raw);
+        // The remote script marks directories with a trailing `/` in
+        // the row itself; mirror that onto `is_dir` so a unique match
+        // skips the trailing space and the next Tab descends.
+        if matches!(request, DynamicRequest::RemotePaths { .. }) {
+            mark_trailing_slash_dirs(&mut candidates);
+        }
         tx.send(DynamicResult {
             candidates,
             no_space,
@@ -775,6 +813,16 @@ pub fn spawn_dynamic(request: DynamicRequest) -> mpsc::Receiver<DynamicResult> {
         .ok();
     });
     rx
+}
+
+/// Rows ending in `/` are directories — mirror the trailing slash onto
+/// `is_dir` (the insert keeps the `/` either way).
+fn mark_trailing_slash_dirs(candidates: &mut [Candidate]) {
+    for candidate in candidates.iter_mut() {
+        if candidate.display.ends_with('/') {
+            candidate.is_dir = true;
+        }
+    }
 }
 
 fn build_command(request: &DynamicRequest) -> Option<std::process::Command> {
@@ -806,6 +854,21 @@ fn build_command(request: &DynamicRequest) -> Option<std::process::Command> {
                 sh_quote(word)
             );
             Some(ssh_command(host, &script))
+        }
+        DynamicRequest::RemotePaths { host, word } => {
+            // File candidates over the side channel. The channel lands
+            // in the remote home, and the interactive shell's cwd is
+            // invisible to it — so the word itself carries the anchor:
+            // a bare word lists the home, a word with a directory head
+            // (`src/`, `./`, `/var/log/`) walks it, `~` expands
+            // against the remote $HOME and completes back as `~`.
+            // Hidden entries only surface once the word starts with a
+            // dot, directories carry a trailing `/`, the wire is
+            // capped at MAX_CANDIDATES rows.
+            let script = r#"bash -c 'w=${1/#~/$HOME}; h=$HOME; compgen -A file -- "$w" 2>/dev/null | while IFS= read -r f; do case $f in ./|../|.|..) continue ;; esac; case $w in .*) ;; *) case ${f##*/} in .*) continue ;; esac ;; esac; [ -d "$f" ] && f="$f/"; [ -n "$h" ] && f=${f/#$h/\~}; printf "%s\n" "$f"; done | head -n 100' _ "#;
+            let mut remote_line = script.to_string();
+            remote_line.push_str(&sh_quote(word));
+            Some(ssh_command(host, &remote_line))
         }
     }
 }
@@ -1324,11 +1387,14 @@ mod tests {
             other => panic!("expected remote cobra route, got {other:?}?"),
         }
 
-        // Remote non-Cobra tool stays silent (no remote path completion).
-        assert!(matches!(
-            route(&argv("ssh web1 tail -f"), 4, "log", 16, &no_aliases(), None),
-            Route::None
-        ));
+        // Remote non-Cobra tool → remote path completion.
+        match route(&argv("ssh web1 tail -f"), 4, "log", 16, &no_aliases(), None) {
+            Route::Dynamic(DynamicRequest::RemotePaths { host, word }) => {
+                assert_eq!(host, "web1");
+                assert_eq!(word, "log");
+            }
+            other => panic!("expected remote paths route, got {other:?}?"),
+        }
     }
 
     #[test]
@@ -1353,11 +1419,25 @@ mod tests {
             other => panic!("expected remote cobra route, got {other:?}?"),
         }
 
-        // Unknown remote word: silent.
-        assert!(matches!(
-            route(&argv("tail"), 1, "f", 5, &no_aliases(), Some("web1")),
-            Route::None
-        ));
+        // Path-shaped first word → remote file candidates, not
+        // remote command names.
+        match route(&argv(""), 0, "src/", 0, &no_aliases(), Some("web1")) {
+            Route::Dynamic(DynamicRequest::RemotePaths { host, word }) => {
+                assert_eq!(host, "web1");
+                assert_eq!(word, "src/");
+            }
+            other => panic!("expected remote paths route, got {other:?}?"),
+        }
+
+        // Unknown remote command: later words fall to remote paths
+        // (was silent before remote path completion existed).
+        match route(&argv("tail"), 1, "f", 5, &no_aliases(), Some("web1")) {
+            Route::Dynamic(DynamicRequest::RemotePaths { host, word }) => {
+                assert_eq!(host, "web1");
+                assert_eq!(word, "f");
+            }
+            other => panic!("expected remote paths route, got {other:?}?"),
+        }
     }
 
     #[test]
@@ -1384,9 +1464,43 @@ mod tests {
             host: "web1".into(),
             word: String::new(),
         };
+        let paths = DynamicRequest::RemotePaths {
+            host: "web1".into(),
+            word: String::new(),
+        };
         assert_eq!(a.key(), b.key());
         assert_ne!(a.key(), remote.key());
         assert_ne!(remote.key(), commands.key());
+        assert_ne!(commands.key(), paths.key());
+    }
+
+    #[test]
+    fn remote_paths_script_lists_and_marks_directories() {
+        let rendered = format!(
+            "{:?}",
+            build_command(&DynamicRequest::RemotePaths {
+                host: "web1".into(),
+                word: "src/".into(),
+            })
+            .unwrap()
+        );
+        // The word rides as the script's argv, hidden entries gated on
+        // a dotted word, the wire capped at MAX_CANDIDATES rows.
+        assert!(rendered.contains("compgen -A file"));
+        assert!(rendered.contains("case $w in .*"));
+        assert!(rendered.contains("head -n 100"));
+        assert!(rendered.contains("src/"));
+    }
+
+    #[test]
+    fn trailing_slash_rows_mark_directories() {
+        let mut candidates = parse_complete_output("Documents/\nreadme.txt\n").0;
+        mark_trailing_slash_dirs(&mut candidates);
+        assert!(candidates[0].is_dir, "Documents/ is a directory");
+        assert!(!candidates[1].is_dir);
+        // is_dir on a unique match suppresses the trailing space and
+        // keeps the `/` for the next Tab to descend.
+        assert_eq!(candidates[0].insert, "Documents/");
     }
 
     #[test]

@@ -111,3 +111,7 @@
   - 守卫与循环：apply_candidates_at 防缩短校验同步折叠（多候选逐候选比较，LCP 不能顶替）；空 LCP 时 CompletionState.current 存已输入词，修复菜单无法进入循环
   - 顺手修复 input_bar.rs 既有 clippy manual_slice_fill 警告（密文掩码改 chars.fill）
   - 验证：tapterm 379（+3）测试通过，clippy/fmt 干净；命令与 ssh 主机补全维持大小写敏感；待用户手测（foo/FOO 补到 Foo.txt、混合大小写 Tab 循环不缩短输入）
+- [x] 【已完成】ssh 会话内远程路径补全（[详情](task/20261120-1718_ssh会话内远程路径补全.md)）
+  - 空洞修复：ssh 会话内非 Cobra 命令的词与 one-shot 行远程词原为 Route::None（cd Tab 无效果），新增 DynamicRequest::RemotePaths 走侧信道 compgen -A file；会话内首词按路径形态（/、~、. 开头）分流 RemotePaths/RemoteCommands
+  - 脚本语义：裸词锚定远程 home（侧信道 cwd 恒为 home，交互 shell cwd 不可见是已知边界）、目录头词精确走头、~ 展开并回映射 `~/`（替换文本裸 ~ 会被 tilde 展开的坑用 \~ 解决）、隐藏项点号门控、目录尾 `/` 由 mark_trailing_slash_dirs 镜像 is_dir、head -n 100 截线
+  - 验证：tapterm 381（+2）测试通过，clippy/fmt 干净，脚本行为 fake HOME 本地实测通过；待用户手测（ssh 后 cd Tab 列目录、逐层下降、~/ 保头；深层目录相对补全锚定 home 为已知边界）
