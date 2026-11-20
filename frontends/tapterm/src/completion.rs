@@ -936,14 +936,18 @@ fn build_command(request: &DynamicRequest) -> Option<std::process::Command> {
             // shell (uid-gated, pts-attached, covers tmux panes); the
             // remote home is the final fallback. `~` words expand
             // against the remote $HOME and complete back as `~`.
-            // Hidden entries only surface once the word starts with a
-            // dot, directories carry a trailing `/`, the wire is capped
-            // at MAX_CANDIDATES rows. A directory-only command's
-            // argument switches compgen to `-A directory` (`cd <Tab>`
-            // never lists files).
+            // Matching folds case like the local static completion:
+            // compgen only receives the directory head (exact), the
+            // last component folds in the loop via nocasematch (absent
+            // on ancient bash → silently exact). Hidden entries only
+            // surface once the last component starts with a dot,
+            // directories carry a trailing `/`, the wire is capped at
+            // MAX_CANDIDATES rows. A directory-only command's argument
+            // switches compgen to `-A directory` (`cd <Tab>` never
+            // lists files).
             let action = if *dirs_only { "directory" } else { "file" };
             let script = format!(
-                r#"bash -c 'probe() {{ best=""; bs=-1; for d in /proc/[0-9]*; do read -r c < "$d/comm" 2>/dev/null || continue; case $c in bash|zsh|fish|nu|ksh|tcsh|dash|mksh) ;; *) continue ;; esac; case "$(readlink "$d/fd/0" 2>/dev/null)" in /dev/pts/*|/dev/tty[0-9]*) ;; *) continue ;; esac; cwd=$(readlink "$d/cwd" 2>/dev/null) || continue; [ -n "$cwd" ] || continue; raw=$(cat "$d/stat" 2>/dev/null) || continue; raw=${{raw#*) }}; set -- $raw; st=${{20}}; case $st in ""|*[!0-9]*) continue ;; esac; [ "$st" -gt "$bs" ] && {{ bs=$st; best=$cwd; }}; done; printf "%s" "$best"; }}; a=$2; [ -n "$a" ] || a=$(probe); cd "$a" 2>/dev/null || true; w=${{1/#~/$HOME}}; h=$HOME; compgen -A {action} -- "$w" 2>/dev/null | while IFS= read -r f; do case $f in ./|../|.|..) continue ;; esac; case $w in .*) ;; *) case ${{f##*/}} in .*) continue ;; esac ;; esac; [ -d "$f" ] && f="$f/"; [ -n "$h" ] && f=${{f/#$h/\~}}; printf "%s\n" "$f"; done | head -n 100' _ "#
+                r#"bash -c 'probe() {{ best=""; bs=-1; for d in /proc/[0-9]*; do read -r c < "$d/comm" 2>/dev/null || continue; case $c in bash|zsh|fish|nu|ksh|tcsh|dash|mksh) ;; *) continue ;; esac; case "$(readlink "$d/fd/0" 2>/dev/null)" in /dev/pts/*|/dev/tty[0-9]*) ;; *) continue ;; esac; cwd=$(readlink "$d/cwd" 2>/dev/null) || continue; [ -n "$cwd" ] || continue; raw=$(cat "$d/stat" 2>/dev/null) || continue; raw=${{raw#*) }}; set -- $raw; st=${{20}}; case $st in ""|*[!0-9]*) continue ;; esac; [ "$st" -gt "$bs" ] && {{ bs=$st; best=$cwd; }}; done; printf "%s" "$best"; }}; a=$2; [ -n "$a" ] || a=$(probe); cd "$a" 2>/dev/null || true; w=${{1/#~/$HOME}}; h=$HOME; shopt -s nocasematch 2>/dev/null; case $w in */*) c="${{w%/*}}/"; t=${{w##*/}} ;; *) c=""; t=$w ;; esac; compgen -A {action} -- "$c" 2>/dev/null | while IFS= read -r f; do case $f in ./|../|.|..) continue ;; esac; case $t in .*) ;; *) case ${{f##*/}} in .*) continue ;; esac ;; esac; case ${{f##*/}} in "$t"*) ;; *) continue ;; esac; [ -d "$f" ] && f="$f/"; [ -n "$h" ] && f=${{f/#$h/\~}}; printf "%s\n" "$f"; done | head -n 100' _ "#
             );
             let mut remote_line = script;
             remote_line.push_str(&sh_quote(word));
@@ -1641,10 +1645,11 @@ mod tests {
             .unwrap()
         );
         // The word and anchor ride as the script's argv, hidden entries
-        // gated on a dotted word, the wire capped at MAX_CANDIDATES
-        // rows.
+        // gated on the word's last component, case folded via
+        // nocasematch, the wire capped at MAX_CANDIDATES rows.
         assert!(rendered.contains("compgen -A file"));
-        assert!(rendered.contains("case $w in .*"));
+        assert!(rendered.contains("nocasematch"));
+        assert!(rendered.contains("case $t in .*"));
         assert!(rendered.contains("head -n 100"));
         assert!(rendered.contains("src/"));
         assert!(rendered.contains("/srv/app"));
