@@ -137,3 +137,7 @@
   - ContextGrid::update_panel_config：换 panel_config 并重写 taffy 样式（panel 叶子 margin/padding、root/container gap），保留拖拽 flex_basis，border 拖拽阈值同步；与 update_scale 共享 refresh_panel_styles 树遍历
   - screen.update_config 接入：同步 context_manager.config.panel（新 tab 用新值）+ 各 grid update_panel_config 后走既有 update_dimensions 重排
   - 验证：compute_tests 新增 panel_reload 4 用例（margin 位移/padding 内缩与列数/同配置 no-op/拖拽分屏保比例），tapterm 387 测试通过，触碰文件 clippy/fmt 干净（input_history.rs:111 存量告警为上任务遗留）；待用户手测（运行中改 margin/padding/row-gap/column-gap 即时重排）
+- [x] 【已完成】图标换为本机西红柿图标（[详情](task/20261120-2101_图标换为本机西红柿图标.md)）
+  - 桌面图标：misc/logo.svg 覆盖为本机 Flat-Remix-Blue-Dark 主题 tomato.svg（红番茄绿叶矢量），goreleaser/nix/cargo-deb 安装链引用文件名不变零改动
+  - 窗口图标：tomato.svg 经 ffmpeg librsvg 渲染 16/32/48/64/128/256 六档 PNG 合成 PNG-in-ICO 覆盖 tap-logo.ico（410598→33878 字节），window.rs LOGO_ICON 常量大小同步
+  - 验证：cargo check -p tapterm 通过，release/tap 已重建安装；待用户手测（启动 tap 任务栏/标题栏为西红柿图标）

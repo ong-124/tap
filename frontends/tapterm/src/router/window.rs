@@ -4,7 +4,7 @@ use tap_window::window::{
     CursorIcon, Fullscreen, Icon, ImePurpose, Window, WindowAttributes,
 };
 
-pub const LOGO_ICON: &[u8; 410598] = include_bytes!("./resources/images/tap-logo.ico");
+pub const LOGO_ICON: &[u8; 33878] = include_bytes!("./resources/images/tap-logo.ico");
 // Terminal W/H constraints
 pub const DEFAULT_MINIMUM_WINDOW_HEIGHT: i32 = 200;
 pub const DEFAULT_MINIMUM_WINDOW_WIDTH: i32 = 300;
