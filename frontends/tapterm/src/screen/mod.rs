@@ -1104,10 +1104,12 @@ impl Screen<'_> {
         self.renderer.input_bar.is_enabled() && !mode.contains(Mode::ALT_SCREEN)
     }
 
-    /// Route a key press to the unified input bar. Returns `true` when
-    /// the bar consumed it and the caller should redraw; `false` lets
-    /// the normal terminal encoding take over (control combos, Tab,
-    /// Escape, alt-modified keys, ... all pass through).
+    /// Route a key press to the unified input bar. The bar owns the
+    /// line: it consumes every key it edits with and swallows the
+    /// rest — except the passthrough whitelist (Ctrl+C from an empty
+    /// bar, Ctrl+D), which returns `false` and falls through to the
+    /// normal terminal encoding. `true` = consumed, caller redraws.
+    /// Bar inactive: everything passes through as before.
     fn process_input_bar_key(
         &mut self,
         key: &tap_window::event::KeyEvent,
@@ -1176,8 +1178,7 @@ impl Screen<'_> {
                 }
                 // Whole-line Tab completion: command words against
                 // PATH, everything else against the focused pane's
-                // cwd. Always consumed — never leaked to the PTY
-                // (Shift+Tab arrives as BackTab and stays passthrough).
+                // cwd. Always consumed — never leaked to the PTY.
                 Key::Named(NamedKey::Tab) => {
                     self.input_bar_tab_complete();
                     return true;
@@ -1195,15 +1196,16 @@ impl Screen<'_> {
             }
         }
 
-        // Exactly Ctrl held: the line-editing combos. Everything else
-        // passes through so Ctrl+C still interrupts (from an empty
-        // bar) and Ctrl+D still sends EOF.
+        // Exactly Ctrl held: the line-editing combos, then the
+        // passthrough whitelist. The bar owns the line, so unlisted
+        // combos die here instead of reaching the pane.
         if mods == ModifiersState::CONTROL {
-            // Ctrl+→ accepts one word of the ghost suggestion when one
-            // is up; otherwise it passes through as the terminal's
-            // word-right (no default binding claims plain Ctrl+→).
+            // Ctrl+→ accepts one word of the ghost suggestion; with
+            // no suggestion up it is swallowed (the shell's readline
+            // is idle — the bar owns the line).
             if let Key::Named(NamedKey::ArrowRight) = key.logical_key.as_ref() {
-                return self.renderer.input_bar.accept_suggestion_word();
+                self.renderer.input_bar.accept_suggestion_word();
+                return true;
             }
             let lower = match key.logical_key.as_ref() {
                 Key::Character(c) => c.to_lowercase(),
@@ -1232,7 +1234,14 @@ impl Screen<'_> {
                     self.renderer.input_bar.clear();
                     return true;
                 }
-                _ => return false,
+                // --- Passthrough whitelist (exact Ctrl only) ---
+                // Ctrl+D sends EOF verbatim (close shell / pane, exit
+                // a REPL, end a heredoc). Everything else on exact
+                // Ctrl is swallowed while the bar owns the line —
+                // widen the opening by adding an arm above this
+                // catch-all, never by reopening the default.
+                "d" => return false,
+                _ => return true,
             }
         }
 
@@ -1247,7 +1256,10 @@ impl Screen<'_> {
             return true;
         }
 
-        false
+        // Whitelist default: the bar owns the line, so keys it does
+        // not claim and that are not whitelisted die here (Esc,
+        // BackTab, F-keys, page keys, alt/super combos, ...).
+        true
     }
 
     /// Probe the focused pane before a keystroke or paste joins the
