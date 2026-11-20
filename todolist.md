@@ -93,3 +93,8 @@
   - 目录/文件改名：12 个 rio 目录（rio-vt/rio-backend/rio-window/librio/librio-wasm/frontends/rioterm 等 → tap-*/libtap*/frontends/tapterm，misc/osx/Rio.app→Tap.app）+ 散落文件（pkgRio.nix→pkgTap.nix、extra/man/rio*.scd→tap*.scd、misc/rio.terminfo/termcap/metainfo/windows、.github/workflows/librio.yml→libtap.yml、specs/librio.md→libtap.md、rio-logo.ico、shell 集成脚本 rio-*.zsh/fish/ps1 等，合计 399 个路径）
   - 全库文本替换 rio/Rio/RIO→tap/Tap/TAP（含 Cargo.toml/两处 Cargo.lock 包名与依赖、TERM_PROGRAM、~/.cache/tap 缓存路径、xterm-tap、com.tapterm.Tap、URL、CHANGELOG 与 task/ 历史文档）；保护误伤词 period/prior(ity)/criterion/interior/scenario/various/spurious/serious/Canario（VK_PRIOR/VK_OEM_PERIOD 等完好）
   - 验证：cargo check --workspace --all-targets 通过（仅 teletypewriter 1 个与本次无关的既有测试警告）；已知残留：misc/logo*.svg base64 像素数据内 4 处 rio 字节序列（动则损坏图片）、raphamorim/tap 与 tapterm.com 等死链（原上游链接机械替换）、sugarloaf/corcovado/teletypewriter/Canario 里约主题命名（不含 rio 字样，未在范围）；待用户实测
+- [x] 【已完成】上游跟进策略与方向决策落档（[详情](task/20261120-1508_上游跟进策略与方向决策.md)）
+  - 方向拍板：保留现架构（自研栈 + 输入栏），否决「架子 + alacritty」提案（真进程嵌入平台不可行/换引擎不减少胶水/tab·pane·广播均已交付）；补全范围冻结为已交付四类（静态命令/路径、Cobra 动态、ssh 一次性、ssh 会话侧信道），bug 驱动修复，不再新增适配器类
+  - 上游价值梯度：tap-vt/teletypewriter/tap-window/sugarloaf 修复与安全补丁按 release 评估移植；性能/图像协议按需；上游产品功能/打包/品牌跳过
+  - 机制：改名后 merge 不可用 → port 模式（cherry-pick/手工移植套改名映射，保护词清单见 20261119-2244）；判停=上游大重构致移植成本超自修
+  - remote：upstream → git@github.com:raphamorim/rio.git（真实上游，SSH fetch-only，push 置 DISABLED；本机 HTTPS 到 GitHub 不通，raphamorim/tap 为改名机械替换死链、仓库不存在）
