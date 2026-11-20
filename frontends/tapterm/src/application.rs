@@ -13,6 +13,8 @@ use crate::watcher::configuration_file_updates;
 ))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use raw_window_handle::HasDisplayHandle;
+use std::error::Error;
+use std::time::{Duration, Instant};
 use tap_backend::clipboard::{Clipboard, ClipboardType};
 use tap_backend::config::colors::{ColorRgb, NamedColor};
 use tap_window::application::ApplicationHandler;
@@ -29,8 +31,6 @@ use tap_window::platform::macos::ActiveEventLoopExtMacOS;
 use tap_window::platform::macos::WindowExtMacOS;
 use tap_window::window::WindowId;
 use tap_window::window::{CursorIcon, Fullscreen};
-use std::error::Error;
-use std::time::{Duration, Instant};
 
 pub struct Application<'a> {
     config: tap_backend::config::Config,
@@ -1424,15 +1424,16 @@ impl ApplicationHandler<EventPayload> for Application<'_> {
             return;
         }
 
-        // `disable-mouse` (default): tap is keyboard-first, pointer
-        // events never reach the screen — no selection, no drags, no
-        // mouse-reporting to the PTY.
+        // `disable-mouse` (default): tap is keyboard-first. Wheel,
+        // touch, and chrome leave events are dropped here; clicks and
+        // motion still flow, but the handlers below filter them down
+        // to the text-selection essentials (drag selection, focus
+        // switch by click, middle-click paste). UI clicks, divider
+        // drags, hints, and mouse reporting to the PTY stay blocked.
         if self.config.disable_mouse
             && matches!(
                 event,
-                WindowEvent::MouseInput { .. }
-                    | WindowEvent::CursorMoved { .. }
-                    | WindowEvent::CursorLeft { .. }
+                WindowEvent::CursorLeft { .. }
                     | WindowEvent::MouseWheel { .. }
                     | WindowEvent::Touch(_)
             )
@@ -1507,6 +1508,110 @@ impl ApplicationHandler<EventPayload> for Application<'_> {
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
+                // `disable-mouse`: buttons exist only for text selection
+                // (click/double-click/drag) and middle-click paste. No
+                // chrome, no pane-border drags, no hint activation, no
+                // mouse reporting to the PTY.
+                if self.config.disable_mouse {
+                    match button {
+                        MouseButton::Left => {
+                            route.window.screen.mouse.left_button_state = state
+                        }
+                        MouseButton::Middle => {
+                            route.window.screen.mouse.middle_button_state = state
+                        }
+                        MouseButton::Right => {
+                            route.window.screen.mouse.right_button_state = state
+                        }
+                        _ => (),
+                    }
+
+                    match state {
+                        ElementState::Pressed => {
+                            // Recompute click state so double/triple click
+                            // selections keep working.
+                            let now = Instant::now();
+                            let elapsed =
+                                now - route.window.screen.mouse.last_click_timestamp;
+                            route.window.screen.mouse.last_click_timestamp = now;
+
+                            let threshold = crate::constants::MULTI_CLICK_THRESHOLD;
+                            let mouse = &route.window.screen.mouse;
+                            route.window.screen.mouse.click_state = match mouse
+                                .click_state
+                            {
+                                _ if button != mouse.last_click_button => {
+                                    route.window.screen.mouse.last_click_button = button;
+                                    ClickState::Click
+                                }
+                                ClickState::Click if elapsed < threshold => {
+                                    ClickState::DoubleClick
+                                }
+                                ClickState::DoubleClick if elapsed < threshold => {
+                                    ClickState::TripleClick
+                                }
+                                _ => ClickState::Click,
+                            };
+
+                            // Focus the pane under the pointer first, so a
+                            // drag starting there selects in that pane.
+                            if route.window.screen.select_current_based_on_mouse() {
+                                route.request_redraw();
+                                return;
+                            }
+
+                            if let MouseButton::Left = button {
+                                let display_offset = route.window.screen.display_offset();
+                                let pos =
+                                    route.window.screen.mouse_position(display_offset);
+                                route
+                                    .window
+                                    .screen
+                                    .on_left_click(pos, &mut self.router.clipboard);
+                            }
+
+                            route.window.screen.process_mouse_bindings(
+                                button,
+                                &mut self.router.clipboard,
+                            );
+                        }
+                        ElementState::Released => {
+                            // Stop selection auto-scroll on button release.
+                            if let MouseButton::Left | MouseButton::Right = button {
+                                let scroll_timer_id =
+                                    route.window.screen.ctx().current_route();
+                                let timer_id = TimerId::new(
+                                    Topic::SelectionScrolling,
+                                    scroll_timer_id,
+                                );
+                                self.scheduler.unschedule(timer_id);
+                            }
+
+                            if !route.window.screen.selection_is_empty()
+                                && matches!(
+                                    button,
+                                    MouseButton::Left | MouseButton::Right
+                                )
+                            {
+                                // X11 convention: a finished selection
+                                // lands in PRIMARY immediately, so
+                                // middle-click pastes what was selected.
+                                route.window.screen.copy_selection(
+                                    ClipboardType::Selection,
+                                    &mut self.router.clipboard,
+                                );
+                                if self.config.copy_on_select {
+                                    route.window.screen.copy_selection(
+                                        ClipboardType::Clipboard,
+                                        &mut self.router.clipboard,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    return;
+                }
+
                 if route.path != RoutePath::Terminal
                     || route.window.screen.renderer.confirm_quit.is_active()
                 {
@@ -1856,12 +1961,20 @@ impl ApplicationHandler<EventPayload> for Application<'_> {
                                 }
                             }
                         } else if matches!(button, MouseButton::Left | MouseButton::Right)
-                            && self.config.copy_on_select
                         {
+                            // X11 convention: a finished selection lands
+                            // in PRIMARY immediately, so middle-click
+                            // pastes what was selected.
                             route.window.screen.copy_selection(
-                                ClipboardType::Clipboard,
+                                ClipboardType::Selection,
                                 &mut self.router.clipboard,
                             );
+                            if self.config.copy_on_select {
+                                route.window.screen.copy_selection(
+                                    ClipboardType::Clipboard,
+                                    &mut self.router.clipboard,
+                                );
+                            }
                         }
                     }
                 }
@@ -1889,6 +2002,52 @@ impl ApplicationHandler<EventPayload> for Application<'_> {
                 route.window.screen.mouse.x = x;
                 route.window.screen.mouse.y = y;
                 route.window.screen.mouse.raw_y = position.y;
+
+                // `disable-mouse`: motion exists only to carry an active
+                // drag selection (and its edge auto-scroll). All hover
+                // work — chrome, borders, hints, cursor icon, mouse
+                // reporting — stays disabled.
+                if self.config.disable_mouse {
+                    let lmb_pressed = route.window.screen.mouse.left_button_state
+                        == ElementState::Pressed;
+                    let rmb_pressed = route.window.screen.mouse.right_button_state
+                        == ElementState::Pressed;
+
+                    if lmb_pressed || rmb_pressed {
+                        // Only start the timer when the drag enters the
+                        // scroll zone; the tick reads mouse.raw_y so it
+                        // keeps scrolling after motion stops. Cancelled
+                        // on button release.
+                        let delta =
+                            route.window.screen.selection_scroll_delta(position.y);
+                        if delta != 0 {
+                            let scroll_timer_id =
+                                route.window.screen.ctx().current_route();
+                            let timer_id =
+                                TimerId::new(Topic::SelectionScrolling, scroll_timer_id);
+                            if !self.scheduler.scheduled(timer_id) {
+                                let event = EventPayload::new(
+                                    TapEventType::Tap(TapEvent::SelectionScrollTick),
+                                    window_id,
+                                );
+                                self.scheduler.schedule(
+                                    event,
+                                    Duration::from_millis(15),
+                                    true,
+                                    timer_id,
+                                );
+                            }
+                        }
+
+                        let display_offset = route.window.screen.display_offset();
+                        let point = route.window.screen.mouse_position(display_offset);
+                        let square_side = route.window.screen.side_by_pos(x);
+                        route.window.screen.mouse.square_side = square_side;
+                        route.window.screen.update_selection(point, square_side);
+                        route.window.screen.context_manager.request_render();
+                    }
+                    return;
+                }
 
                 if route.path != RoutePath::Terminal
                     || route.window.screen.renderer.confirm_quit.is_active()
