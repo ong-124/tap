@@ -655,6 +655,13 @@ impl Screen<'_> {
 
         let scale = self.sugarloaf.scale_factor();
         for context_grid in self.context_manager.contexts_mut() {
+            // `[panel]` geometry live-reloads with the rest of the
+            // config: swap the tree's margin/padding/gap styles before
+            // the relayout below, which re-derives each pane's content
+            // inset from the new padding. Without this a panel config
+            // edit only surfaced after a restart (border-width/radius
+            // reload through the Renderer rebuild above).
+            context_grid.update_panel_config(config.panel);
             context_grid.update_line_height(config.line_height);
 
             context_grid.update_scaled_margin(Margin::new(
@@ -705,6 +712,9 @@ impl Screen<'_> {
         // Update keyboard config in context manager
         self.context_manager.config.keyboard = config.keyboard.clone();
         self.context_manager.config.title = config.title.clone();
+        // Tabs created after the reload build their grid from this, so
+        // `[panel]` edits apply to them too, not just existing panes.
+        self.context_manager.config.panel = config.panel;
 
         // Re-evaluate the opaque flag — toggling `window.opacity` /
         // `window.blur` at runtime should flip the compositor mode.

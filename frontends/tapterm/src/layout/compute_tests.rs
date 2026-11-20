@@ -1932,3 +1932,171 @@ mod metrics {
         assert!(grid.inner[&nodes[1]].val.dimension.lines < lines);
     }
 }
+
+// A `[panel]` config edit must reach an existing grid: the hot-reload
+// path swaps the tree's styles (`ContextGrid::update_panel_config`)
+// and the next layout pass moves the border box by the new margin and
+// re-derives the pane's content inset from the new padding.
+mod panel_reload {
+    use super::*;
+    use crate::context::{create_mock_context, ContextDimension};
+    use tap_backend::config::layout::Panel;
+    use tap_backend::event::{VoidListener, WindowId};
+
+    type Grid = ContextGrid<VoidListener>;
+
+    const WIDTH: f32 = 1200.0;
+    const HEIGHT: f32 = 800.0;
+
+    fn dimension(scale: f32) -> ContextDimension {
+        let text = TextDimensions {
+            scale,
+            width: 18.,
+            height: 9.,
+        };
+        ContextDimension::build(
+            WIDTH,
+            HEIGHT,
+            text,
+            cell_for(text),
+            1.0,
+            14.0,
+            Margin::default(),
+        )
+    }
+
+    fn grid(scale: f32) -> Grid {
+        let ctx =
+            create_mock_context(VoidListener {}, WindowId::from(0), 0, dimension(scale));
+        let mut grid =
+            ContextGrid::new(ctx, Margin::all(0.0), [0.; 4], [0.; 4], Panel::default());
+        // The startup resize that runs the first `apply_taffy_layout`.
+        grid.resize(WIDTH, HEIGHT);
+        grid
+    }
+
+    /// `update_panel_config` followed by the relayout `update_config`
+    /// performs (`update_dimensions` runs the same `apply_taffy_layout`).
+    fn reload(grid: &mut Grid, panel: Panel) {
+        grid.update_panel_config(panel);
+        grid.resize(grid.width, grid.height);
+    }
+
+    #[track_caller]
+    fn assert_px(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() <= 1.0,
+            "expected {expected}px, got {actual}px"
+        );
+    }
+
+    #[test]
+    fn a_reloaded_margin_moves_the_border_box() {
+        for scale in [1.0, 2.0] {
+            let mut grid = grid(scale);
+            let node = grid.current;
+            let [x, y, w, h] = grid.inner[&node].layout_rect;
+            assert_px(x, 2.0 * scale);
+            assert_px(y, 2.0 * scale);
+            assert_px(w, WIDTH - 4.0 * scale);
+            assert_px(h, HEIGHT - 4.0 * scale);
+
+            reload(
+                &mut grid,
+                Panel {
+                    margin: Margin::all(10.0),
+                    ..Panel::default()
+                },
+            );
+            let [x, y, w, h] = grid.inner[&node].layout_rect;
+            assert_px(x, 10.0 * scale);
+            assert_px(y, 10.0 * scale);
+            assert_px(w, WIDTH - 20.0 * scale);
+            assert_px(h, HEIGHT - 20.0 * scale);
+        }
+    }
+
+    #[test]
+    fn a_reloaded_padding_rederives_the_content_inset_and_columns() {
+        for scale in [1.0, 2.0] {
+            let mut grid = grid(scale);
+            let node = grid.current;
+            assert_eq!(grid.inner[&node].val.dimension.margin, Margin::all(12.0));
+
+            reload(
+                &mut grid,
+                Panel {
+                    padding: Margin::all(30.0),
+                    ..Panel::default()
+                },
+            );
+            let item = &grid.inner[&node];
+            // The paint origin's inset source carries the new padding…
+            assert_eq!(item.val.dimension.margin, Margin::all(30.0));
+            // …so the columns follow: border box minus the padding inset,
+            // divided by the 18px cell stride, truncated like `compute`.
+            let cell_w = 18.0;
+            let expected =
+                ((WIDTH - 2.0 * 2.0 * scale - 2.0 * 30.0 * scale) / cell_w) as usize;
+            assert_eq!(item.val.dimension.columns, expected);
+            let terminal = item.val.terminal.lock();
+            assert_eq!(terminal.grid.columns(), item.val.dimension.columns);
+        }
+    }
+
+    #[test]
+    fn an_unchanged_panel_config_is_a_no_op() {
+        let mut grid = grid(1.0);
+        let node = grid.current;
+        let before = grid.inner[&node].layout_rect;
+        grid.update_panel_config(Panel::default());
+        assert_eq!(grid.inner[&node].layout_rect, before);
+    }
+
+    // The drag-pinned `flex_basis` on a pane survives a reload: only
+    // margin/padding/gap are panel-config-owned.
+    #[test]
+    fn a_reloaded_config_keeps_a_dragged_split() {
+        for scale in [1.0, 2.0] {
+            let mut grid = grid(scale);
+            let left = grid.current;
+            let ctx = create_mock_context(
+                VoidListener {},
+                WindowId::from(0),
+                1,
+                dimension(scale),
+            );
+            grid.split_right(ctx);
+            let right = grid.current;
+            assert!(grid.move_divider_right(90.0 * scale));
+            let (l_before, r_before) = (
+                grid.inner[&left].layout_rect[2],
+                grid.inner[&right].layout_rect[2],
+            );
+
+            reload(
+                &mut grid,
+                Panel {
+                    margin: Margin::all(6.0),
+                    padding: Margin::all(20.0),
+                    row_gap: 4.0,
+                    column_gap: 8.0,
+                    ..Panel::default()
+                },
+            );
+            // Same share of the (now slightly different) free space,
+            // within the tolerance the window-resize ratio tests keep.
+            let (l_after, r_after) = (
+                grid.inner[&left].layout_rect[2],
+                grid.inner[&right].layout_rect[2],
+            );
+            let ratio = l_before / r_before;
+            let expected = (l_after + r_after) * ratio / (1.0 + ratio);
+            assert!(
+                (l_after - expected).abs() <= 1.5 + (l_after + r_after) * 0.01,
+                "ratio {ratio:.3} became {:.3} after the reload",
+                l_after / r_after
+            );
+        }
+    }
+}

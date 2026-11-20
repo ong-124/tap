@@ -132,3 +132,8 @@
   - 通读 tap-backend/src/config 全部 16 文件 + tap-vt colors 默认值 + sugarloaf fonts + tapterm cli/bindings 动作词表，产出 docs/20261120-1953_config配置清单.md（23 节）
   - 覆盖：配置位置/热重载/优先级、顶层项、[cursor]/[window]/[navigation]/[renderer]/[fonts]/[colors]/[keyboard]/[title]/[scroll]/[developer]/[hints]/[bell]/[notify-on-command-finish]/[effects]/[input-bar]/[panel]/[bindings]/[platform] 全部键的默认值与可选值，CLI 参数与环境变量，最小示例，本 fork 与上游 rio 默认值差异备忘
   - 纯文档任务，未改代码；待用户审阅文档内容
+- [x] 【已完成】panel 配置热重载生效（[详情](task/20261120-2030_panel配置热重载生效.md)）
+  - 诊断 [panel] margin/padding 热重载无效果：布局引擎正常，panel_config 仅在 ContextGrid::new 固化，update_config 未传播（border-width/radius 走 Renderer 重建所以能生效）
+  - ContextGrid::update_panel_config：换 panel_config 并重写 taffy 样式（panel 叶子 margin/padding、root/container gap），保留拖拽 flex_basis，border 拖拽阈值同步；与 update_scale 共享 refresh_panel_styles 树遍历
+  - screen.update_config 接入：同步 context_manager.config.panel（新 tab 用新值）+ 各 grid update_panel_config 后走既有 update_dimensions 重排
+  - 验证：compute_tests 新增 panel_reload 4 用例（margin 位移/padding 内缩与列数/同配置 no-op/拖拽分屏保比例），tapterm 387 测试通过，触碰文件 clippy/fmt 干净（input_history.rs:111 存量告警为上任务遗留）；待用户手测（运行中改 margin/padding/row-gap/column-gap 即时重排）

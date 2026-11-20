@@ -1665,22 +1665,46 @@ impl<T: tap_backend::event::EventListener> ContextGrid<T> {
             return;
         }
         self.scale = new_scale;
+        self.refresh_panel_styles();
+    }
 
+    /// Live-reload `[panel]` geometry: swap the stored config and
+    /// rewrite the panel-config-owned style fields across the tree via
+    /// [`Self::refresh_panel_styles`]. The border hit threshold follows
+    /// the new `border-width`. No layout runs here: the caller's
+    /// `update_dimensions`/`resize` pass relayouts with the new styles
+    /// and re-derives each pane's `dimension.margin` from the new
+    /// padding.
+    pub fn update_panel_config(&mut self, panel: tap_backend::config::layout::Panel) {
+        if panel == self.panel_config {
+            return;
+        }
+        self.panel_config = panel;
+        self.border_config.width = panel.border_width;
+        self.refresh_panel_styles();
+    }
+
+    /// Rewrite the panel-config-owned taffy style fields on every node:
+    /// panel leaves get the current margin/padding, the root and split
+    /// containers the current gaps. Sizing a drag or a collapse pinned
+    /// on a node (`flex_basis`/weights) is left alone.
+    fn refresh_panel_styles(&mut self) {
+        let scale = self.scale;
         let gap = geometry::Size {
-            width: length(self.panel_config.column_gap * new_scale),
-            height: length(self.panel_config.row_gap * new_scale),
+            width: length(self.panel_config.column_gap * scale),
+            height: length(self.panel_config.row_gap * scale),
         };
         let padding = geometry::Rect {
-            left: length(self.panel_config.padding.left * new_scale),
-            right: length(self.panel_config.padding.right * new_scale),
-            top: length(self.panel_config.padding.top * new_scale),
-            bottom: length(self.panel_config.padding.bottom * new_scale),
+            left: length(self.panel_config.padding.left * scale),
+            right: length(self.panel_config.padding.right * scale),
+            top: length(self.panel_config.padding.top * scale),
+            bottom: length(self.panel_config.padding.bottom * scale),
         };
         let margin = geometry::Rect {
-            left: length(self.panel_config.margin.left * new_scale),
-            right: length(self.panel_config.margin.right * new_scale),
-            top: length(self.panel_config.margin.top * new_scale),
-            bottom: length(self.panel_config.margin.bottom * new_scale),
+            left: length(self.panel_config.margin.left * scale),
+            right: length(self.panel_config.margin.right * scale),
+            top: length(self.panel_config.margin.top * scale),
+            bottom: length(self.panel_config.margin.bottom * scale),
         };
 
         let mut stack = vec![self.root_node];
