@@ -102,3 +102,7 @@
   - disable-mouse 路径去 click-to-focus：按下时把指针所在 pane 锁定为本次选择周期目标（ContextGrid mouse_pane latch），拖拽/双击/三击选区落指针 pane，键盘焦点、输入栏路由、焦点环、CSI 焦点报告全程不动
   - Screen 选择类 helper 改寻址目标 pane（latch 未生效回落焦点 pane，完整鼠标路径行为零变化）；latch 于松开与窗口失焦时释放；中键粘贴仍进键盘焦点 pane；`disable-mouse = false` 的 click-to-focus 保留（vim 鼠标上报路由依赖）
   - 验证：tap-backend 229 / tapterm 376（+1 latch 测试）通过，clippy/fmt（触碰文件）干净；既有遗留不顺手修（tap-vt test_single_capability_requests 改名残留失败、clippy manual_slice_fill、18 文件 import 乱序）；release 已重建，待用户手测（点击不抢焦点、未聚焦 pane 拖拽选中、中键粘贴回焦点 pane、拖拽中关 pane）
+- [x] 【已完成】修复新建 tab 逐个缩小 pane（[详情](task/20261120-1628_修复新建tab缩小pane.md)）
+  - 根因：add_context 单分屏分支克隆 pane 级 dimension（post-margin panel rect）当窗口尺寸用，ContextGrid::new 再扣一次 scaled_margin（含输入栏高度），且每 tab 克隆上一 tab 已缩小值形成复利
+  - 修复：add_context 无条件改用 current_grid().grid_dimension()（grid 级窗口尺寸 + 反缩放 margin，多分屏分支既有的正确路径）
+  - 验证：tapterm 376 测试通过，clippy/fmt 干净，待用户手测（连续新建多个 tab pane 高度不变）
