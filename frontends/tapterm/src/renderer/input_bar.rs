@@ -894,6 +894,11 @@ impl InputBar {
         }
     }
 
+    /// True when the editable line holds no characters.
+    pub fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
+    }
+
     pub fn clear(&mut self) {
         self.buffer.clear();
         self.cursor = 0;

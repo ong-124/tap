@@ -1196,8 +1196,8 @@ impl Screen<'_> {
         }
 
         // Exactly Ctrl held: the line-editing combos. Everything else
-        // passes through so Ctrl+C still interrupts and Ctrl+D still
-        // sends EOF.
+        // passes through so Ctrl+C still interrupts (from an empty
+        // bar) and Ctrl+D still sends EOF.
         if mods == ModifiersState::CONTROL {
             // Ctrl+→ accepts one word of the ghost suggestion when one
             // is up; otherwise it passes through as the terminal's
@@ -1218,13 +1218,19 @@ impl Screen<'_> {
                     self.renderer.input_bar.delete_to_line_start();
                     return true;
                 }
-                // Ctrl+C interrupts what the shell is showing; the
-                // half-composed line no longer matches the prompt. The
-                // byte itself falls through to the shared input path,
+                // Ctrl+C forks on the bar's state. With a
+                // half-composed line it is a line-editor abort: clear
+                // the bar and consume the key (the prompt is ours to
+                // redraw, no SIGINT goes out). An empty bar passes
+                // the byte through so the shell still gets
+                // interrupted; the byte rides the shared input path,
                 // which fans it out while a broadcast is armed.
                 "c" => {
+                    if self.renderer.input_bar.is_empty() {
+                        return false;
+                    }
                     self.renderer.input_bar.clear();
-                    return false;
+                    return true;
                 }
                 _ => return false,
             }
