@@ -1,8 +1,8 @@
 use crate::layout::ContextDimension;
-use tap_backend::sugarloaf::text::DrawOpts;
-use tap_backend::sugarloaf::Sugarloaf;
 use std::sync::Mutex;
 use std::time::Instant;
+use tap_backend::sugarloaf::text::DrawOpts;
+use tap_backend::sugarloaf::Sugarloaf;
 
 static START_TIME: Mutex<Option<Instant>> = Mutex::new(None);
 

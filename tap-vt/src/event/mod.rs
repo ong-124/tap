@@ -7,13 +7,13 @@ use crate::crosswords::grid::Scroll;
 use crate::crosswords::pos::{Direction, Pos};
 use crate::crosswords::search::{Match, RegexSearch};
 use crate::error::TapError;
-#[cfg(feature = "tap-window")]
-use tap_window::event::Event as TapWindowEvent;
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::sync::Arc;
+#[cfg(feature = "tap-window")]
+use tap_window::event::Event as TapWindowEvent;
 
 #[cfg(feature = "tap-window")]
 use tap_window::event_loop::EventLoopProxy;

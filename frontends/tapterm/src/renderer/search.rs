@@ -3,9 +3,9 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
+use std::time::Instant;
 use tap_backend::sugarloaf::text::DrawOpts;
 use tap_backend::sugarloaf::Sugarloaf;
-use std::time::Instant;
 
 /// Convert `[f32; 4]` colour to the `[u8; 4]` non-premul form the
 /// `Text` draw path expects (the vertex shader premultiplies).

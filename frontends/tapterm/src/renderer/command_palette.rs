@@ -4,9 +4,9 @@
 // LICENSE file in the root directory of this source tree.
 
 use crate::renderer::scrollbar;
+use std::time::Instant;
 use tap_backend::sugarloaf::text::DrawOpts;
 use tap_backend::sugarloaf::Sugarloaf;
-use std::time::Instant;
 
 /// Convert `[f32; 4]` colour to `[u8; 4]` for the `Text` API (the
 /// vertex shader premultiplies, so pass non-premul RGBA).

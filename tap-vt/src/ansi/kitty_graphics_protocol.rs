@@ -1,8 +1,8 @@
 use crate::simd_base64;
 use crate::time::{Duration, Instant};
-use tap_graphics::{ColorType, GraphicData, GraphicId, ResizeCommand, ResizeParameter};
 use smallvec::SmallVec;
 use std::collections::HashMap;
+use tap_graphics::{ColorType, GraphicData, GraphicId, ResizeCommand, ResizeParameter};
 use tracing::debug;
 
 /// Maximum width or height (per axis) we accept for a kitty-graphics

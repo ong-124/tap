@@ -1,3 +1,5 @@
+use rustc_hash::FxHashMap;
+use std::time::Instant;
 use tap_backend::ansi::graphics::{
     AtlasPlacement, KittyPlacement, StoredImage, VirtualPlacement,
 };
@@ -9,8 +11,6 @@ use tap_backend::crosswords::square::Square;
 use tap_backend::crosswords::{Crosswords, Mode};
 use tap_backend::event::{EventListener, TerminalDamage};
 use tap_backend::selection::SelectionRange;
-use rustc_hash::FxHashMap;
-use std::time::Instant;
 
 #[derive(Clone, Copy, Debug)]
 pub enum BackgroundState {

@@ -3,8 +3,8 @@
 // This source code is licensed under the MIT license found in the
 // LICENSE file in the root directory of this source tree.
 
-use tap_backend::sugarloaf::Sugarloaf;
 use std::time::Instant;
+use tap_backend::sugarloaf::Sugarloaf;
 
 // Layout. Kept `pub` so other UI elements (command palette, future
 // overlays) can render a scrollbar that matches the terminal's exactly

@@ -1,9 +1,9 @@
+use std::borrow::Cow;
+use std::ops::Deref;
 use tap_backend::crosswords::pos::{Column, Direction, Line, Pos};
 use tap_backend::crosswords::search::Match;
 use tap_backend::crosswords::search::{RegexIter, RegexSearch};
 use tap_backend::crosswords::Crosswords;
-use std::borrow::Cow;
-use std::ops::Deref;
 
 /// Maximum number of linewraps followed outside of the viewport during search highlighting.
 pub const MAX_SEARCH_LINES: usize = 100;

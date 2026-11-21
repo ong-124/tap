@@ -21,6 +21,12 @@ pub use tap_vt::event::{BlockedKind, ProgramState, ProgramStatus, ProgramStatusE
 pub use tap_vt::grapheme_lut::cluster_width;
 pub use tap_vt::selection::SelectionRange;
 
+use std::borrow::Cow;
+use std::error::Error;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+#[cfg(feature = "pty")]
+use std::sync::Mutex;
 pub use tap_vt::ansi::CursorShape;
 pub use tap_vt::crosswords::pos::Side;
 use tap_vt::crosswords::pos::{Column as PosColumn, Line, Pos};
@@ -34,12 +40,6 @@ use tap_vt::event::{EventListener, TapEvent, WindowId};
 #[cfg(feature = "pty")]
 use tap_vt::performer::Machine;
 use tap_vt::selection::{Selection, SelectionType};
-use std::borrow::Cow;
-use std::error::Error;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-#[cfg(feature = "pty")]
-use std::sync::Mutex;
 #[cfg(all(feature = "pty", target_os = "windows"))]
 use teletypewriter::create_pty;
 #[cfg(all(feature = "pty", not(target_os = "windows")))]

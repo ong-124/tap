@@ -27,6 +27,8 @@
 //! `font::shaper::run::RunIterator`.
 
 use core::hash::Hasher;
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use tap_backend::config::colors::term::TermColors;
 use tap_backend::config::colors::{AnsiColor, NamedColor};
 use tap_backend::crosswords::grid::row::Row;
@@ -35,8 +37,6 @@ use tap_backend::crosswords::search::Match;
 use tap_backend::crosswords::square::{ContentTag, Extras, Square, Wide};
 use tap_backend::crosswords::style::{Style, StyleFlags, UnderlineKind};
 use tap_backend::selection::SelectionRange;
-use rustc_hash::FxHashMap;
-use smallvec::SmallVec;
 
 /// Snapshot's per-frame extras map. Keyed by the cell's `extras_id`,
 /// populated by `Crosswords::snapshot_visible` from a walk of visible
@@ -3374,8 +3374,8 @@ fn ensure_custom_glyph_by_codepoint(
     max_span: u16,
     primary_ascent: impl FnOnce(&mut GridGlyphRasterizer) -> Option<i16>,
 ) -> Option<(GlyphKey, AtlasSlot, bool, u16)> {
-    use tap_backend::sugarloaf::font::glyph_registry::GlyphAlignV;
     use std::sync::atomic::Ordering;
+    use tap_backend::sugarloaf::font::glyph_registry::GlyphAlignV;
 
     // Fetch first so we know the registration's version + declared
     // width. The lookup happens under the registry's RwLock read; the

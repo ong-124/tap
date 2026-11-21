@@ -1,11 +1,11 @@
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use tap_backend::config::hints::Hint;
 use tap_backend::crosswords::grid::Dimensions;
 use tap_backend::crosswords::pos::{Column, Line, Pos};
 use tap_backend::crosswords::square::Wide;
 use tap_backend::crosswords::Crosswords;
 use tap_backend::event::EventListener;
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
 
 /// State for hint selection mode
 pub struct HintState {

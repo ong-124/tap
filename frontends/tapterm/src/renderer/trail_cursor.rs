@@ -9,9 +9,9 @@
 // scheduled while the trail rests, so the first tick of a new flight
 // integrates a nominal frame instead of the whole pause (frame_dt).
 
+use std::time::Instant;
 use tap_backend::ansi::CursorShape;
 use tap_backend::sugarloaf::Sugarloaf;
-use std::time::Instant;
 
 const DEPTH: f32 = 0.0;
 

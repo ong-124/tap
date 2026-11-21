@@ -28,11 +28,11 @@ mod shell_integration;
 mod watcher;
 
 use clap::Parser;
+use std::path::PathBuf;
+use std::str::FromStr;
 use tap_backend::config::config_dir_path;
 use tap_backend::event::EventPayload;
 use tap_backend::{ansi, crosswords, event, performer, selection};
-use std::path::PathBuf;
-use std::str::FromStr;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{
     self, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,

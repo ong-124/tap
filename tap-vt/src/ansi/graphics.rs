@@ -6,10 +6,10 @@ use crate::ansi::sixel;
 use crate::config::colors::ColorRgb;
 use crate::crosswords::grid::Dimensions;
 use parking_lot::Mutex;
-use tap_graphics::{GraphicData, GraphicId};
 use rustc_hash::FxHashMap;
 use std::mem;
 use std::sync::Arc;
+use tap_graphics::{GraphicData, GraphicId};
 use tracing::debug;
 
 #[derive(Debug, Clone)]

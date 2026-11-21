@@ -2,6 +2,8 @@
 // Run with: cargo run --example simple_unified
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use std::error::Error;
+use sugarloaf::{layout::RootStyle, Sugarloaf, SugarloafWindow, SugarloafWindowSize};
 use tap_window::application::ApplicationHandler;
 use tap_window::event_loop::ControlFlow;
 use tap_window::event_loop::{ActiveEventLoop, DeviceEvents};
@@ -9,8 +11,6 @@ use tap_window::window::{Window, WindowId};
 use tap_window::{
     dpi::LogicalSize, event::WindowEvent, event_loop::EventLoop, window::WindowAttributes,
 };
-use std::error::Error;
-use sugarloaf::{layout::RootStyle, Sugarloaf, SugarloafWindow, SugarloafWindowSize};
 
 fn main() {
     let width = 800.0;

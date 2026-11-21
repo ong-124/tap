@@ -6,11 +6,11 @@
 //!
 //! Run: `cargo run -p tap-vt --example kitty_image`
 
+use std::sync::{Arc, Mutex};
 use tap_vt::ansi::CursorShape;
 use tap_vt::crosswords::{Crosswords, CrosswordsSize};
 use tap_vt::event::{EventListener, TapEvent, WindowId};
 use tap_vt::performer::handler::Processor;
-use std::sync::{Arc, Mutex};
 
 /// Records (image_id, width, height, byte-len) for every kitty image emitted.
 #[derive(Clone, Default)]

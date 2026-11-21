@@ -14,9 +14,6 @@ use raw_window_handle::{
 // Color / style types the grid-emit palette resolves against. These are
 // `tap_vt` re-exports; tap-grid names them via `tap_backend`, which
 // re-exports the same crate, so they're the identical nominal types.
-use tap_vt::config::colors::term::{List, TermColors, DIM_FACTOR};
-use tap_vt::config::colors::{AnsiColor, ColorArray, ColorWGPU, Colors, NamedColor};
-use tap_vt::crosswords::style::{Style, StyleFlags};
 use sugarloaf::font::fonts::SugarloafFonts;
 use sugarloaf::font::FontLibrary;
 use sugarloaf::grid::atlas::{GlyphKey, RasterizedGlyph};
@@ -28,6 +25,9 @@ use sugarloaf::{
     GraphicId, GraphicOverlay, Sugarloaf, SugarloafBackend, SugarloafRenderer,
     SugarloafWindow, SugarloafWindowSize,
 };
+use tap_vt::config::colors::term::{List, TermColors, DIM_FACTOR};
+use tap_vt::config::colors::{AnsiColor, ColorArray, ColorWGPU, Colors, NamedColor};
+use tap_vt::crosswords::style::{Style, StyleFlags};
 
 /// The renderer instance, boxed and handed to the host as an opaque pointer.
 /// `'static`: the only borrow `Sugarloaf` carries is the raw window handle,

@@ -1,6 +1,6 @@
 use crate::event::Msg;
-use tap_backend::event::WindowSize;
 use std::borrow::Cow;
+use tap_backend::event::WindowSize;
 
 pub struct Messenger {
     pub channel: corcovado::channel::Sender<Msg>,

@@ -8,12 +8,12 @@
 
 use crate::context::ContextManager;
 use crate::renderer::helpers::spring::Spring;
-use tap_backend::event::{EventProxy, ProgressReport, ProgressState};
-use tap_backend::sugarloaf::text::DrawOpts;
-use tap_backend::sugarloaf::{Attributes, Sugarloaf};
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use std::time::{Duration, Instant};
+use tap_backend::event::{EventProxy, ProgressReport, ProgressState};
+use tap_backend::sugarloaf::text::DrawOpts;
+use tap_backend::sugarloaf::{Attributes, Sugarloaf};
 
 pub const ISLAND_HEIGHT: f32 = 38.0;
 const PROGRESS_BAR_HEIGHT: f32 = 3.0;

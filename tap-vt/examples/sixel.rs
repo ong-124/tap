@@ -6,11 +6,11 @@
 //!
 //! Run: `cargo run -p tap-vt --example sixel`
 
+use std::sync::{Arc, Mutex};
 use tap_vt::ansi::CursorShape;
 use tap_vt::crosswords::{Crosswords, CrosswordsSize};
 use tap_vt::event::{EventListener, TapEvent, WindowId};
 use tap_vt::performer::handler::Processor;
-use std::sync::{Arc, Mutex};
 
 /// Records (id, width, height, byte-len) for every graphic the terminal emits.
 #[derive(Clone, Default)]

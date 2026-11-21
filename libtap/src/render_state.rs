@@ -1,4 +1,6 @@
 use crate::{InlineImages, Listener, Surface};
+use rustc_hash::FxHashMap;
+use std::sync::Arc;
 use tap_graphics::{atlas_image_key, ColorType, GraphicData};
 use tap_vt::ansi::graphics::{
     atlas_overlay_geometry, kitty_overlay_geometry, AtlasPlacement, KittyOverlayGeometry,
@@ -19,8 +21,6 @@ use tap_vt::crosswords::style::Style;
 use tap_vt::crosswords::Crosswords;
 use tap_vt::event::sync::TerminalLock;
 use tap_vt::event::TerminalDamage;
-use rustc_hash::FxHashMap;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ViewportSelection {

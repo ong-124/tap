@@ -8,13 +8,13 @@ use crate::crosswords::vi_mode::ViMotion;
 use crate::crosswords::Mode;
 use crate::layout::SplitDirection;
 use bitflags::bitflags;
+use std::fmt::Debug;
 use tap_backend::config::bindings::KeyBinding as ConfigKeyBinding;
 use tap_backend::config::keyboard::Keyboard as ConfigKeyboard;
 use tap_window::event::MouseButton;
 use tap_window::keyboard::Key::*;
 use tap_window::keyboard::NamedKey::*;
 use tap_window::keyboard::{Key, KeyLocation, ModifiersState, PhysicalKey};
-use std::fmt::Debug;
 // use tap_window::platform::scancode::PhysicalKeyExtScancode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

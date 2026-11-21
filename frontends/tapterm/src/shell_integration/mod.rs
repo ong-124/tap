@@ -637,14 +637,14 @@ mod test {
     #[cfg(unix)]
     #[test]
     fn zsh_integration_reports_finished_commands_through_the_parser() {
-        use tap_backend::ansi::CursorShape;
-        use tap_backend::crosswords::{Crosswords, CrosswordsSize};
-        use tap_backend::event::{EventListener, TapEvent, WindowId};
-        use tap_backend::performer::handler::Processor;
         use std::cell::RefCell;
         use std::io::{Read as _, Write as _};
         use std::rc::Rc;
         use std::time::{Duration, Instant};
+        use tap_backend::ansi::CursorShape;
+        use tap_backend::crosswords::{Crosswords, CrosswordsSize};
+        use tap_backend::event::{EventListener, TapEvent, WindowId};
+        use tap_backend::performer::handler::Processor;
 
         #[derive(Clone, Default)]
         struct Finished(Rc<RefCell<Vec<Option<i32>>>>);

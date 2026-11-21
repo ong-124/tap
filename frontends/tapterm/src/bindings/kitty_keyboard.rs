@@ -1,6 +1,7 @@
 // build_key_sequence was originally taken from alacritty
 // which is licensed under Apache 2.0 license.
 
+use std::borrow::Cow;
 use tap_backend::crosswords::Mode;
 use tap_window::event::{ElementState, KeyEvent};
 use tap_window::keyboard::Key;
@@ -8,7 +9,6 @@ use tap_window::keyboard::KeyLocation;
 use tap_window::keyboard::ModifiersState;
 use tap_window::keyboard::NamedKey;
 use tap_window::platform::modifier_supplement::KeyEventExtModifierSupplement;
-use std::borrow::Cow;
 
 #[inline(never)]
 pub fn build_key_sequence(key: &KeyEvent, mods: ModifiersState, mode: Mode) -> Vec<u8> {

@@ -12,6 +12,9 @@ use tap_backend::clipboard::Clipboard;
 use tap_backend::config::Config as TapConfig;
 use tap_backend::error::{TapError, TapErrorLevel, TapErrorType};
 
+use routes::{assistant, RoutePath};
+use rustc_hash::FxHashMap;
+use std::time::{Duration, Instant};
 use tap_backend::event::WindowId;
 use tap_window::dpi::{PhysicalPosition, PhysicalSize};
 use tap_window::event_loop::ActiveEventLoop;
@@ -21,9 +24,6 @@ use tap_window::platform::startup_notify::{
     self, EventLoopExtStartupNotify, WindowAttributesExtStartupNotify,
 };
 use tap_window::window::Window;
-use routes::{assistant, RoutePath};
-use rustc_hash::FxHashMap;
-use std::time::{Duration, Instant};
 
 // 𜱭𜱭 unicode is not available yet for all OS
 // https://www.unicode.org/charts/PDF/Unicode-16.0/U160-1CC00.pdf

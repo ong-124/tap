@@ -5,10 +5,10 @@ use crate::{
     RenderState, SelectionKind, Side, Square, Style, StyleFlags, Surface,
     SurfaceDelegate, SurfaceDesc, SurfaceId,
 };
-use tap_vt::config::colors::{AnsiColor, ColorRgb, NamedColor};
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
+use tap_vt::config::colors::{AnsiColor, ColorRgb, NamedColor};
 
 pub const TAP_ACTION_SET_TITLE: u32 = 0;
 pub const TAP_ACTION_RING_BELL: u32 = 1;
