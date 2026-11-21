@@ -110,19 +110,46 @@ pub fn filter_dirs_only(candidates: Vec<Candidate>, argv: &[String]) -> Vec<Cand
 }
 
 /// Candidates for a word. Dispatches on first-word-ness.
-pub fn gather(word_start_char: usize, word: &str, sources: &Sources) -> Vec<Candidate> {
+pub fn gather(
+    word_start_char: usize,
+    word: &str,
+    sources: &Sources,
+    aliases: &HashMap<String, String>,
+) -> Vec<Candidate> {
     if is_command_word(word_start_char, word) {
-        command_candidates(word, &sources.path_dirs)
+        command_candidates(word, &sources.path_dirs, aliases)
     } else {
         path_candidates(word, sources.cwd.as_deref(), sources.home.as_deref())
     }
 }
 
-/// Executables on PATH (plus builtins) matching the prefix. A command
-/// shadowing (same basename in several dirs) appears once.
-pub fn command_candidates(prefix: &str, path_dirs: &[PathBuf]) -> Vec<Candidate> {
+/// Executables on PATH (plus builtins and the configured command
+/// aliases) matching the prefix. A command shadowing (same basename in
+/// several dirs) appears once; an alias shadowing a real command takes
+/// its slot and shows the expansion.
+pub fn command_candidates(
+    prefix: &str,
+    path_dirs: &[PathBuf],
+    aliases: &HashMap<String, String>,
+) -> Vec<Candidate> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut candidates = Vec::new();
+
+    // Aliases first: user-curated, few, and they must survive the
+    // MAX_CANDIDATES cap that the PATH scan can hit. The row shows the
+    // expansion (`k → kubectl`), the insert is the alias itself —
+    // what a shell would run.
+    let mut alias_names: Vec<(&String, &String)> = aliases.iter().collect();
+    alias_names.sort_by(|a, b| a.0.cmp(b.0));
+    for (name, target) in alias_names {
+        if name.starts_with(prefix) && seen.insert(name.clone()) {
+            candidates.push(Candidate {
+                display: format!("{name} → {target}"),
+                insert: sh_escape(name),
+                is_dir: false,
+            });
+        }
+    }
 
     for builtin in SHELL_BUILTINS {
         if builtin.starts_with(prefix) && seen.insert(builtin.to_string()) {
@@ -1264,7 +1291,63 @@ mod tests {
     #[test]
     fn builtin_completion_matches_prefix() {
         let sources = sources_with(None, None);
-        assert_eq!(inserts(gather(0, "sour", &sources)), vec!["source"]);
+        assert_eq!(
+            inserts(gather(0, "sour", &sources, &no_aliases())),
+            vec!["source"]
+        );
+    }
+
+    #[test]
+    fn alias_candidates_complete_the_alias_and_show_the_expansion() {
+        let sources = sources_with(None, None);
+
+        // `kill` (builtin) rides along on the same prefix; the alias row
+        // is among the matches and shows its expansion.
+        let candidates = gather(0, "k", &sources, &aliases());
+        let alias = candidates
+            .iter()
+            .find(|c| c.insert == "k")
+            .expect("alias row present");
+        assert_eq!(alias.display, "k → kubectl");
+        assert!(!alias.is_dir);
+
+        // A longer prefix misses the alias, like any command.
+        assert!(inserts(gather(0, "ku", &sources, &aliases())).is_empty());
+        // Later words never see it (not a command word).
+        assert!(inserts(gather(2, "k", &sources, &aliases())).is_empty());
+    }
+
+    #[test]
+    fn alias_shadows_the_path_command_in_one_slot() {
+        let dir = TempDir::new("alias-shadow");
+        let exe = dir.path().join("k");
+        std::fs::write(&exe, "").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
+        let sources = Sources {
+            path_dirs: vec![dir.path().to_path_buf()],
+            home: None,
+            cwd: None,
+            session_ssh_host: None,
+            session_remote_cwd: None,
+        };
+
+        // The alias takes the slot and the PATH twin stays out (`kill`
+        // the builtin may still ride the same prefix).
+        let candidates = gather(0, "k", &sources, &aliases());
+        let twins = candidates.iter().filter(|c| c.insert == "k").count();
+        assert_eq!(twins, 1, "alias and PATH command merge into one row");
+        assert_eq!(
+            candidates
+                .iter()
+                .find(|c| c.insert == "k")
+                .map(|c| c.display.as_str()),
+            Some("k → kubectl")
+        );
     }
 
     #[test]
@@ -1277,18 +1360,27 @@ mod tests {
         let sources = sources_with(Some(dir.path().to_path_buf()), None);
 
         // Plain prefix: visible entries only.
-        assert_eq!(inserts(gather(2, "f", &sources)), vec!["foo.txt"]);
+        assert_eq!(
+            inserts(gather(2, "f", &sources, &no_aliases())),
+            vec!["foo.txt"]
+        );
         // Dir candidates bake in the slash so the next Tab descends.
-        assert_eq!(inserts(gather(2, "s", &sources)), vec!["src/"]);
+        assert_eq!(
+            inserts(gather(2, "s", &sources, &no_aliases())),
+            vec!["src/"]
+        );
         // A leading dot unlocks hidden entries.
         assert_eq!(
-            inserts(gather(2, ".", &sources)),
+            inserts(gather(2, ".", &sources, &no_aliases())),
             vec![".config/", ".hidden"]
         );
         // Inside a typed directory part: contents complete relative.
-        assert!(inserts(gather(2, "src/", &sources)).is_empty());
+        assert!(inserts(gather(2, "src/", &sources, &no_aliases())).is_empty());
         std::fs::write(dir.path().join("src").join("main.rs"), "").unwrap();
-        assert_eq!(inserts(gather(2, "src/", &sources)), vec!["src/main.rs"]);
+        assert_eq!(
+            inserts(gather(2, "src/", &sources, &no_aliases())),
+            vec!["src/main.rs"]
+        );
     }
 
     #[test]
@@ -1300,21 +1392,36 @@ mod tests {
         let sources = sources_with(Some(dir.path().to_path_buf()), None);
 
         // Any case in the query reaches the real file name.
-        assert_eq!(inserts(gather(2, "foo", &sources)), vec!["Foo.txt"]);
-        assert_eq!(inserts(gather(2, "FOO", &sources)), vec!["Foo.txt"]);
-        assert_eq!(inserts(gather(2, "readm", &sources)), vec!["README.md"]);
-        assert_eq!(inserts(gather(2, "s", &sources)), vec!["Src/"]);
+        assert_eq!(
+            inserts(gather(2, "foo", &sources, &no_aliases())),
+            vec!["Foo.txt"]
+        );
+        assert_eq!(
+            inserts(gather(2, "FOO", &sources, &no_aliases())),
+            vec!["Foo.txt"]
+        );
+        assert_eq!(
+            inserts(gather(2, "readm", &sources, &no_aliases())),
+            vec!["README.md"]
+        );
+        assert_eq!(
+            inserts(gather(2, "s", &sources, &no_aliases())),
+            vec!["Src/"]
+        );
 
         // Exact-case matches rank ahead of folded ones.
         std::fs::write(dir.path().join("foobar"), "").unwrap();
         assert_eq!(
-            inserts(gather(2, "fo", &sources)),
+            inserts(gather(2, "fo", &sources, &no_aliases())),
             vec!["foobar", "Foo.txt"]
         );
 
         // Non-ASCII compares verbatim (caseless scripts).
         std::fs::write(dir.path().join("中文.txt"), "").unwrap();
-        assert_eq!(inserts(gather(2, "中文", &sources)), vec!["中文.txt"]);
+        assert_eq!(
+            inserts(gather(2, "中文", &sources, &no_aliases())),
+            vec!["中文.txt"]
+        );
     }
 
     #[test]
@@ -1325,13 +1432,13 @@ mod tests {
 
         let word = format!("{}/al", dir.path().display());
         assert_eq!(
-            inserts(gather(2, &word, &sources)),
+            inserts(gather(2, &word, &sources, &no_aliases())),
             vec![format!("{}/alpha", dir.path().display())]
         );
         // Trailing slash lists the directory itself.
         let word = format!("{}/", dir.path().display());
         assert_eq!(
-            inserts(gather(2, &word, &sources)),
+            inserts(gather(2, &word, &sources, &no_aliases())),
             vec![format!("{}/alpha", dir.path().display())]
         );
 
@@ -1340,8 +1447,14 @@ mod tests {
         let home = TempDir::new("home");
         std::fs::write(home.path().join("zshrc"), "").unwrap();
         let sources = sources_with(None, Some(home.path().to_path_buf()));
-        assert_eq!(inserts(gather(0, "~/zs", &sources)), vec!["~/zshrc"]);
-        assert_eq!(inserts(gather(0, "~", &sources)), vec!["~/zshrc"]);
+        assert_eq!(
+            inserts(gather(0, "~/zs", &sources, &no_aliases())),
+            vec!["~/zshrc"]
+        );
+        assert_eq!(
+            inserts(gather(0, "~", &sources, &no_aliases())),
+            vec!["~/zshrc"]
+        );
     }
 
     #[test]
@@ -1826,13 +1939,13 @@ mod tests {
         std::fs::write(dir.path().join("it's here"), "").unwrap();
         let sources = sources_with(Some(dir.path().to_path_buf()), None);
 
-        let candidates = gather(2, "my", &sources);
+        let candidates = gather(2, "my", &sources, &no_aliases());
         assert_eq!(candidates[0].display, "my file.txt", "display verbatim");
         assert_eq!(candidates[0].insert, r"my\ file.txt", "insert escaped");
         assert_eq!(unescape_word(&candidates[0].insert), "my file.txt");
 
         // The quote character is escaped too.
-        let candidates = gather(2, "it", &sources);
+        let candidates = gather(2, "it", &sources, &no_aliases());
         assert_eq!(candidates[0].insert, "it\\'s\\ here");
     }
 
@@ -1846,14 +1959,20 @@ mod tests {
 
         // The symlink is followed for the directory test, so it gets
         // the trailing slash like a real directory.
-        assert_eq!(inserts(gather(2, "li", &sources)), vec!["link/"]);
+        assert_eq!(
+            inserts(gather(2, "li", &sources, &no_aliases())),
+            vec!["link/"]
+        );
         // A broken symlink falls back to file treatment (no slash).
         std::os::unix::fs::symlink(
             dir.path().join("nowhere"),
             dir.path().join("dangling"),
         )
         .unwrap();
-        assert_eq!(inserts(gather(2, "da", &sources)), vec!["dangling"]);
+        assert_eq!(
+            inserts(gather(2, "da", &sources, &no_aliases())),
+            vec!["dangling"]
+        );
     }
 
     #[test]

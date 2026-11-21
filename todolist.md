@@ -146,3 +146,8 @@
   - 原符号 ❯ U+276F（Fira Code 无字形）广播串 `>> ❯` 经 shape_for 首字符机制钉死等宽字体必豆腐，换为 🍅 U+1F345（正常 `🍅`、广播 `>> 🍅`）
   - 广播 marker 与提示符拆两次独立 draw，各自按首字符解析字体，🍅 走 fontconfig discovery → Noto Color Emoji（swash CBDT 彩色位图 + color atlas 链路确认可行）
   - 验证：check / clippy（触碰文件干净）/ fmt 通过，tapterm 387 测试通过，release 已重建；待用户手测两种模式提示符显示彩色 🍅
+- [x] 【已完成】Tab 补全候选项包含 command-aliases（[详情](task/20261121-1557_Tab补全候选项包含command-aliases.md)）
+  - 用户反馈 Tab 补全不含 alias：command-aliases 此前仅参与动态路由（resolve_tool 按工具补参数），静态命令位只查 PATH + 内建表，alias 本身永不出现在候选列
+  - completion.rs command_candidates 加 aliases 参数：alias 候选列前置于内建/PATH 扫描（防候选上限截断）、大小写敏感前缀、seen 去重使 alias 遮蔽同名 PATH 命令只占一行；display `k → kubectl` 仅渲染，insert = alias 本身；gather 签名同步
+  - input_bar.rs tab_complete 两处静态分支传 &self.aliases（bar 经 set_options 已持有配置表）；边界：alias 只影响本地首词位，ssh 会话首词仍走远端 compgen 不注入本地 alias
+  - 验证：tapterm 389（+2）测试通过，触碰文件 clippy/fmt 干净；待用户手测（`k<Tab>` 出 `k → kubectl` 候选、补出 `k ` 带空格、与同名 PATH 命令只占一行、ssh 会话行为不变）

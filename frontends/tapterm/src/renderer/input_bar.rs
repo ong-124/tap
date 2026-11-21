@@ -706,7 +706,12 @@ impl InputBar {
                         return;
                     }
                     let candidates = crate::completion::filter_dirs_only(
-                        crate::completion::gather(word_start, &word, sources),
+                        crate::completion::gather(
+                            word_start,
+                            &word,
+                            sources,
+                            &self.aliases,
+                        ),
                         &argv,
                     );
                     self.apply_candidates_at(candidates, word_start, &word, false);
@@ -727,7 +732,7 @@ impl InputBar {
                     return;
                 }
                 let candidates = crate::completion::filter_dirs_only(
-                    crate::completion::gather(word_start, &word, sources),
+                    crate::completion::gather(word_start, &word, sources, &self.aliases),
                     &argv,
                 );
                 self.apply_candidates_at(candidates, word_start, &word, false);
