@@ -1488,9 +1488,20 @@ impl Screen<'_> {
 
         // An interactive ssh submission names its destination right
         // now: pre-warm the completion side channel's ControlMaster so
-        // even the first Tab in the session skips the handshake.
+        // even the first Tab in the session skips the handshake. The
+        // pane's shell-reported cwd also goes stale at this moment —
+        // it is the local shell's last OSC 7 value, and a remote shell
+        // without integration never overwrites it — so drop it: the
+        // session scopes by host (or the remote's own reports) instead
+        // of anchoring history and completion at a local directory.
         if let Some(host) = crate::completion::interactive_ssh_dest(&line) {
             crate::completion::warm_ssh_side_channel(&host);
+            use tap_backend::performer::handler::Handler;
+            self.context_manager
+                .current()
+                .terminal
+                .lock()
+                .set_current_directory(None);
         }
 
         let mut bytes = line.into_bytes();

@@ -660,9 +660,11 @@ pub enum DynamicRequest {
         host: String,
         word: String,
         /// Shell-reported cwd of the remote session (OSC 7) — the
-        /// remote script `cd`s here before completing. `None` lets the
-        /// script probe the interactive shell's cwd over `/proc` and
-        /// fall back to the remote home.
+        /// remote script `cd`s here before completing. An anchor that is
+        /// `None` or fails to `cd` (a stale local value from before the
+        /// session, a deleted remote directory) makes the script probe
+        /// the interactive shell's cwd over `/proc` and fall back to
+        /// the remote home.
         anchor: Option<String>,
         /// The word is a directory-only command's argument (`cd <Tab>`):
         /// the script switches `compgen` to `-A directory`.
@@ -931,10 +933,12 @@ fn build_command(request: &DynamicRequest) -> Option<std::process::Command> {
             // in the remote home, and the interactive shell's cwd is
             // invisible to it — the word carries its own anchor when it
             // can (`~`, absolute, directory head), and relative words
-            // anchor at `$2` (the session's shell-reported cwd) or, in
-            // its absence, at a `/proc` probe for the newest interactive
-            // shell (uid-gated, pts-attached, covers tmux panes); the
-            // remote home is the final fallback. `~` words expand
+            // anchor at `$2` (the session's shell-reported cwd) or, when
+            // that is empty OR fails to `cd` (stale local OSC 7 value
+            // from before the session, deleted remote directory), at a
+            // `/proc` probe for the newest interactive shell
+            // (uid-gated, pts-attached, covers tmux panes); the remote
+            // home is the final fallback. `~` words expand
             // against the remote $HOME and complete back as `~`.
             // Matching folds case like the local static completion:
             // compgen only receives the directory head (exact), the
@@ -947,7 +951,7 @@ fn build_command(request: &DynamicRequest) -> Option<std::process::Command> {
             // lists files).
             let action = if *dirs_only { "directory" } else { "file" };
             let script = format!(
-                r#"bash -c 'probe() {{ best=""; bs=-1; for d in /proc/[0-9]*; do read -r c < "$d/comm" 2>/dev/null || continue; case $c in bash|zsh|fish|nu|ksh|tcsh|dash|mksh) ;; *) continue ;; esac; case "$(readlink "$d/fd/0" 2>/dev/null)" in /dev/pts/*|/dev/tty[0-9]*) ;; *) continue ;; esac; cwd=$(readlink "$d/cwd" 2>/dev/null) || continue; [ -n "$cwd" ] || continue; raw=$(cat "$d/stat" 2>/dev/null) || continue; raw=${{raw#*) }}; set -- $raw; st=${{20}}; case $st in ""|*[!0-9]*) continue ;; esac; [ "$st" -gt "$bs" ] && {{ bs=$st; best=$cwd; }}; done; printf "%s" "$best"; }}; a=$2; [ -n "$a" ] || a=$(probe); cd "$a" 2>/dev/null || true; w=${{1/#~/$HOME}}; h=$HOME; shopt -s nocasematch 2>/dev/null; case $w in */*) c="${{w%/*}}/"; t=${{w##*/}} ;; *) c=""; t=$w ;; esac; compgen -A {action} -- "$c" 2>/dev/null | while IFS= read -r f; do case $f in ./|../|.|..) continue ;; esac; case $t in .*) ;; *) case ${{f##*/}} in .*) continue ;; esac ;; esac; case ${{f##*/}} in "$t"*) ;; *) continue ;; esac; [ -d "$f" ] && f="$f/"; [ -n "$h" ] && f=${{f/#$h/\~}}; printf "%s\n" "$f"; done | head -n 100' _ "#
+                r#"bash -c 'probe() {{ best=""; bs=-1; for d in /proc/[0-9]*; do read -r c < "$d/comm" 2>/dev/null || continue; case $c in bash|zsh|fish|nu|ksh|tcsh|dash|mksh) ;; *) continue ;; esac; case "$(readlink "$d/fd/0" 2>/dev/null)" in /dev/pts/*|/dev/tty[0-9]*) ;; *) continue ;; esac; cwd=$(readlink "$d/cwd" 2>/dev/null) || continue; [ -n "$cwd" ] || continue; raw=$(cat "$d/stat" 2>/dev/null) || continue; raw=${{raw#*) }}; set -- $raw; st=${{20}}; case $st in ""|*[!0-9]*) continue ;; esac; [ "$st" -gt "$bs" ] && {{ bs=$st; best=$cwd; }}; done; printf "%s" "$best"; }}; a=$2; cd "$a" 2>/dev/null || {{ a=$(probe); cd "$a" 2>/dev/null || true; }}; w=${{1/#~/$HOME}}; h=$HOME; shopt -s nocasematch 2>/dev/null; case $w in */*) c="${{w%/*}}/"; t=${{w##*/}} ;; *) c=""; t=$w ;; esac; compgen -A {action} -- "$c" 2>/dev/null | while IFS= read -r f; do case $f in ./|../|.|..) continue ;; esac; case $t in .*) ;; *) case ${{f##*/}} in .*) continue ;; esac ;; esac; case ${{f##*/}} in "$t"*) ;; *) continue ;; esac; [ -d "$f" ] && f="$f/"; [ -n "$h" ] && f=${{f/#$h/\~}}; printf "%s\n" "$f"; done | head -n 100' _ "#
             );
             let mut remote_line = script;
             remote_line.push_str(&sh_quote(word));
@@ -1732,11 +1736,13 @@ mod tests {
             })
             .unwrap()
         );
-        // An empty anchor makes the script run the /proc probe (newest
-        // pts-attached shell) before completing.
+        // A missing anchor makes the script run the /proc probe (newest
+        // pts-attached shell) before completing, and an anchor whose
+        // `cd` fails falls into the same probe.
         assert!(rendered.contains("probe()"));
         assert!(rendered.contains("/proc/[0-9]*"));
         assert!(rendered.contains("readlink"));
+        assert!(rendered.contains("|| { a=$(probe); cd"));
         // The anchor slot is an empty single-quoted word.
         assert!(rendered.contains("''"));
     }

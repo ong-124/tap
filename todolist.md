@@ -122,6 +122,7 @@
   - 梯度二：脚本内 /proc 探测（comm∈shell 表、fd/0 指 pts、starttime 最新取 cwd；`${20}` 偏移修正设计笔误 + 非数字防御），cd 后跑现有 compgen 管道
   - 梯度三：远程 home 兜底不变；顺带修正 ssh 会话内 sources.cwd 错位（foreground_ssh_host/pane_osc7_cwd 两 helper，tab 与 submit 共用，ghost/提交元数据 OSC 7-only）
   - 验证：tapterm 382（+1）测试通过，clippy/fmt 干净；probe/anchor 脚本本地实测通过（pts 上 zsh 命中 56ms、anchor cd 生效、无效 anchor 回落）；v2 端口精确匹配（ss + SSH_CONNECTION）仍为演进方向；待用户手测（ssh 后 cd /var/log 裸词 Tab 列该目录）
+  - 修复轮次一（20261121）：ssh 相对路径补全锚错目录——本地 shell 集成的 OSC 7（本地 cwd）驻留到 ssh 会话，远端无集成不刷新，anchor 为陈旧本地路径 cd 失败静默落 home，相对词/裸词全锚错、绝对词自带锚不受影响；脚本锚定链改「cd 失败即 probe 再回落 home」，交互 ssh 提交时 `set_current_directory(None)` 清除陈旧值（作用域退化 host-only 至远端自报）；tapterm 387 通过，触碰文件 clippy/fmt 干净，待用户手测（ssh 后相对词/裸词 Tab 锚定远端真实目录）
 - [x] 【已完成】输入历史 SQLite 三表重构（[详情](task/20261120-1922_输入历史SQLite三表重构.md)）
   - 三表模型（用户设计）：`dirs(host,cwd)` / `commands(line,uses,ts)` / `usages(dir_id,command_id,ts,uses,exit)` 各自防重，rusqlite 0.32 bundled，WAL + busy_timeout，进程级共享连接，损坏库自愈重建
   - 作用域语义：本地 `(cwd, line)`、ssh `(host, cwd, line)`，host 经 `ssh -G` 归一化（按 dest 内存缓存，失败退原样）；远端无 OSC 7 退化按主机聚合
